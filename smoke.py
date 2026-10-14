@@ -90,6 +90,11 @@ export default {{
           model: {{ providerID: "fixture", id: "fixture" }},
           time: {{ created: 1, completed: 2 }}, finish: "stop",
           content: [{{ type: "text", text: "# Terminal review fixture\\n\\nAlpha paragraph.\\n" }}],
+        }}, {{
+          id: "msg_smoke_older", type: "assistant", agent: "build",
+          model: {{ providerID: "fixture", id: "fixture" }},
+          time: {{ created: 0, completed: 1 }}, finish: "stop",
+          content: [{{ type: "text", text: "# Previous reply fixture\\n\\nAlpha paragraph.\\n" }}],
         }}], cursor: {{}} }} }} }},
         session: {{ ...ctx.client.session,
         prompt: (input) => ctx.client.session.prompt({{ ...input, resume: false }}),
@@ -153,14 +158,27 @@ export default {{
     assert str(document) in encoded, encoded
     assert document.read_text() == content, "Review modified the original document"
 
-    open_review("document-alias", '/annotate-last "文档 sample.md"', document.name)
+    open_review("last-fixed", '/annotate-last 2')
+    wait("Terminal review fixture", "last-fixed-content")
     keys("q")
-    wait("No annotations", "document-alias-return")
+    wait("No annotations", "last-fixed-return")
     assert api("get", f"/api/session/{session}/inbox") == document_inbox
+
+    open_review("previous-open", "/annotate 2")
+    wait("Previous reply fixture", "previous-content")
+    annotate("SMOKE previous reply feedback", "previous-note")
+    keys("q")
+    wait("Send annotations?", "previous-confirmation")
+    keys("Enter")
+    wait("Sent 1 annotation", "previous-sent")
+    previous_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
+    assert "msg_smoke_older" in previous_inbox
+    assert "SMOKE previous reply feedback" in previous_inbox
 
     print(json.dumps({"passed": ["real TUI launch", "create annotation", "terminal restore",
                                   "confirmed API delivery", "empty review", "cancelled review",
-                                  "document path arguments", "document API delivery", "document alias"],
+                                  "document path arguments", "document API delivery", "last fixed to latest",
+                                  "numbered reply API delivery"],
                       "evidence": str(root)}, ensure_ascii=False))
 finally:
     tmux("kill-server", check=False)

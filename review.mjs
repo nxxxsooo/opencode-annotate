@@ -48,6 +48,11 @@ async function documentSource(input, client, sessionID, signal) {
 }
 
 export function selectReply(messages) {
+  return eligibleReplies(messages)[0]
+}
+
+function eligibleReplies(messages) {
+  const replies = []
   const newest = [...messages].sort((a, b) =>
     b.time.created - a.time.created || b.id.localeCompare(a.id),
   )
@@ -55,12 +60,14 @@ export function selectReply(messages) {
     if (message.type !== "assistant" || message.time.completed === undefined || message.error) continue
     if (["tool-calls", "error", "content-filter"].includes(message.finish)) continue
     const text = message.content.filter(part => part.type === "text").map(part => part.text).join("\n\n")
-    if (text.trim()) return { id: message.id, text }
+    if (text.trim()) replies.push({ id: message.id, text })
   }
+  return replies
 }
 
-async function latestReply(client, sessionID, signal) {
+async function latestReply(client, sessionID, signal, position = 1) {
   const seen = new Set()
+  const messages = new Set()
   let cursor
   do {
     signal.throwIfAborted()
@@ -68,8 +75,11 @@ async function latestReply(client, sessionID, signal) {
       sessionID, type: "assistant", limit: 50,
       ...(cursor ? { cursor } : { order: "desc" }),
     }, { signal })
-    const reply = selectReply(page.data)
-    if (reply) return reply
+    for (const reply of eligibleReplies(page.data)) {
+      if (messages.has(reply.id)) continue
+      messages.add(reply.id)
+      if (--position === 0) return reply
+    }
     cursor = page.cursor?.next
     if (cursor && seen.has(cursor)) throw new Error("Session history returned a repeated page cursor.")
     seen.add(cursor)
@@ -125,11 +135,18 @@ export function createReviewCommand(context, options = {}) {
       // The UI cache contains only a recent page; a long tool run can push the last
       // completed reply out of it. Read the session-scoped history, newest first.
       const target = input.trim()
-      const source = target
+      const numeric = target !== "" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(target)
+      const position = numeric ? Number(target) : 1
+      if (numeric && (!/^\d+$/.test(target) || !Number.isSafeInteger(position) || position < 1)) {
+        throw new Error("Choose a positive integer reply number (1 = latest, 2 = previous).")
+      }
+      const source = target && !numeric
         ? await documentSource(target, context.client, sessionID, controller.signal)
-        : await latestReply(context.client, sessionID, controller.signal)
+        : await latestReply(context.client, sessionID, controller.signal, position)
       if (controller.signal.aborted) return
-      if (!source) return notice("This session has no completed assistant reply yet.")
+      if (!source) return notice(position === 1
+        ? "This session has no completed assistant reply yet."
+        : `Can't find reply ${position}: this session has fewer completed assistant text replies.`)
 
       directory = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "opencode-annotate-"))
       keepDraft = true

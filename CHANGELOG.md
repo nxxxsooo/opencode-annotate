@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Select older completed replies with `/annotate 2`, `/annotate 3`, and so on.
+  Bare `/annotate` and `/annotate 1` still select the latest reply.
+- Count only eligible completed text replies across history pages; report missing
+  replies and invalid numbers without opening a different source.
+- `/annotate-last` now always selects the latest reply and ignores arguments.
+  **Migration:** replace `/annotate-last file.md` with `/annotate file.md`.
+- Verify numbered feedback delivery and fixed latest-reply selection in the real
+  terminal smoke test, alongside 21 behavior tests.
+
 ## 0.2.2
 
 - All confirmation dialogs, status notices, errors, and the feedback header sent

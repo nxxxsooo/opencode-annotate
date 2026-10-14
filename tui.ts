@@ -14,11 +14,21 @@ export default Plugin.define({
           commands: [{
             id: "opencode-plannotator-tui.annotate",
             title: "Annotate reply or document (TUI)",
-            description: "Annotate the last reply or a file; press q, then confirm to send",
+            description: "Annotate a reply (1 = latest, 2 = previous) or a file; press q, then confirm to send",
             group: "Plannotator",
             palette: true,
-            slash: { name: "annotate", aliases: ["annotate-last"], arguments: true },
+            slash: { name: "annotate", arguments: true },
             run: review.run,
+          }, {
+            id: "opencode-plannotator-tui.annotate-last",
+            title: "Annotate last reply (TUI)",
+            description: "Annotate the latest completed reply; press q, then confirm to send",
+            group: "Plannotator",
+            palette: true,
+            // Keep slash submission with a trailing space local to the command.
+            // Any supplied argument is deliberately ignored: this always means latest.
+            slash: { name: "annotate-last", arguments: true },
+            run: () => review.run(),
           }],
         }))
         return null

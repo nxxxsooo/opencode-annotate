@@ -35,10 +35,9 @@ jobs:
           if published="$(npm view "$name@$version" dist.tarball 2>/dev/null)" && test -n "$published"; then
             mkdir -p "$RUNNER_TEMP/package-check"
             npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package-check"
-            curl --fail --location --retry 3 "$published" --output "$RUNNER_TEMP/package-check/registry.tgz"
-            python3 scripts/verify-package.py \
-              "$RUNNER_TEMP/package-check/$name-$version.tgz" \
-              "$RUNNER_TEMP/package-check/registry.tgz"
+            curl --fail --location --retry 3 "$published" --output "$RUNNER_TEMP/registry.tgz"
+            # Scoped names pack as scope-name-version.tgz; the directory holds only this archive.
+            python3 scripts/verify-package.py "$RUNNER_TEMP"/package-check/*.tgz "$RUNNER_TEMP/registry.tgz"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"

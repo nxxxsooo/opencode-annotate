@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 — new package name
+
+- Publish as `@nxxxsooo/opencode-annotate` from `nxxxsooo/opencode-annotate`. The old
+  `opencode-plannotator-tui` package is deprecated; remove it and add the new one.
+- No behavior changes from 0.4.2.
+
 ## 0.4.2 — OpenCode Annotate
 
 The project is now called OpenCode Annotate. It is still published as

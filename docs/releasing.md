@@ -2,15 +2,15 @@
 
 ## Package identity
 
-The project is named OpenCode Annotate, but it publishes as `opencode-plannotator-tui`
-from `nxxxsooo/opencode-plannotator-tui`. The npm name `opencode-annotate` belongs to an
-unrelated package. Renaming the package or repository would need a new npm bootstrap
-and a new Trusted Publisher binding.
+OpenCode Annotate publishes as `@nxxxsooo/opencode-annotate` from
+`nxxxsooo/opencode-annotate`. Versions 0.4.2 and earlier were published as
+`opencode-plannotator-tui`, which is now deprecated with a pointer to the new name.
+The unscoped npm name `opencode-annotate` belongs to an unrelated package.
 
 To switch a maintainer installation from a local checkout back to npm, run
 `node scripts/install-plugin.mjs --undo <cli-before.json>` with the private backup under
 `.local/migration/`, or replace the checkout path in `cli.json` with
-`opencode-plannotator-tui@latest`. Reopen the terminal client.
+`@nxxxsooo/opencode-annotate@latest`. Reopen the terminal client.
 
 The npm package, Git tag and GitHub Release use the same semver. The maintained
 source is this repository; OpenCode installs the published npm artifact.
@@ -21,7 +21,7 @@ For a package that does not yet exist on npm, publish its first version from an
 authenticated maintainer terminal with `npm publish --access public`, completing
 the registry's 2FA flow. Then configure a GitHub Actions Trusted Publisher for:
 
-- Repository: `nxxxsooo/opencode-plannotator-tui`
+- Repository: `nxxxsooo/opencode-annotate`
 - Workflow: `publish.yml`
 - Allowed action: npm publish
 - Environment: blank
@@ -39,12 +39,12 @@ evidence that OIDC publication has been exercised; verify that on the next relea
 5. If that version already exists (for example, the bootstrap), the workflow
    compares published file bytes and executable bits with the local package before
    skipping the upload. Compressed archive checksums can differ between platforms.
-6. Verify `npm view opencode-plannotator-tui version dist-tags --json`, then create
+6. Verify `npm view @nxxxsooo/opencode-annotate version dist-tags --json`, then create
    the matching GitHub Release with user-facing changes and install/update commands.
 7. Refresh the maintainer's installation:
 
    ```sh
-   opencode plugin update opencode-plannotator-tui@latest
+   opencode plugin update @nxxxsooo/opencode-annotate@latest
    opencode plugin list
    ```
 

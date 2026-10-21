@@ -6,7 +6,7 @@ import os from "node:os"
 
 const root = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "")
 const source = entry => typeof entry === "string" ? entry : entry.package
-const oldEntry = entry => source(entry) === "opencode-plannotator-tui" || source(entry)?.startsWith("opencode-plannotator-tui@")
+const oldEntry = entry => source(entry) === "@nxxxsooo/opencode-annotate" || source(entry)?.startsWith("@nxxxsooo/opencode-annotate@")
 const configPath = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "opencode/cli.json")
 const filename = await realpath(configPath)
 const bytes = await readFile(filename, "utf8"), config = JSON.parse(bytes)
@@ -20,7 +20,7 @@ if (process.argv[2] === "--undo") {
 } else {
   const candidates = config.plugins.filter(oldEntry)
   if (config.plugins.some(entry => source(entry) === root)) { console.log("Local plugin is already configured."); process.exit(0) }
-  if (candidates.length !== 1) throw new Error("Expected exactly one existing Plannotator TUI entry; no changes made")
+  if (candidates.length !== 1) throw new Error("Expected exactly one existing @nxxxsooo/opencode-annotate entry; no changes made")
   const backupDir = path.join(root, ".local/migration")
   await mkdir(backupDir, { recursive: true, mode: 0o700 })
   backup = path.join(backupDir, `cli-before-${Date.now()}.json`)

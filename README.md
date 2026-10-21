@@ -1,7 +1,7 @@
 # OpenCode Annotate
 
-[![npm](https://img.shields.io/npm/v/opencode-plannotator-tui)](https://www.npmjs.com/package/opencode-plannotator-tui)
-[![CI](https://github.com/nxxxsooo/opencode-plannotator-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/nxxxsooo/opencode-plannotator-tui/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@nxxxsooo/opencode-annotate)](https://www.npmjs.com/package/@nxxxsooo/opencode-annotate)
+[![CI](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **Annotate replies, documents, or live HTML pages, then send feedback to the originating OpenCode session.**
@@ -11,8 +11,9 @@ provides text review; the [Annotate HTML-derived browser companion](browser/UPST
 provides webpage review. This repository owns explicit routing, native messaging,
 session targeting, terminal handoff and confirmed feedback delivery.
 
-The npm package is `opencode-plannotator-tui`; the name `opencode-annotate` on npm
-belongs to an unrelated project.
+Published on npm as `@nxxxsooo/opencode-annotate`. It replaces `opencode-plannotator-tui`
+(0.4.2 and earlier); to switch, run
+`opencode plugin remove opencode-plannotator-tui@latest` and then install this package as below.
 
 ```text
 /annotate                         Review the last completed assistant reply
@@ -48,7 +49,7 @@ Homebrew 6 may first require `brew trust plannotator/tap`. Alternatively, use
 Then install the plugin:
 
 ```sh
-opencode plugin add opencode-plannotator-tui@latest
+opencode plugin add @nxxxsooo/opencode-annotate@latest
 ```
 
 OpenCode detects its TUI-only entrypoint and adds it to your global **`cli.json`**.
@@ -59,7 +60,7 @@ Manual configuration, preserving other entries:
 
 ```json
 {
-  "plugins": ["opencode-plannotator-tui@latest"]
+  "plugins": ["@nxxxsooo/opencode-annotate@latest"]
 }
 ```
 
@@ -155,7 +156,7 @@ session has an assistant reply.
 it does not follow this repository's commits. Update just this plugin with:
 
 ```sh
-opencode plugin update opencode-plannotator-tui@latest
+opencode plugin update @nxxxsooo/opencode-annotate@latest
 ```
 
 Reopen your terminal client to load updated package code. No shared background
@@ -164,7 +165,7 @@ service restart is required. Check the installed version with `opencode plugin l
 To remove it:
 
 ```sh
-opencode plugin remove opencode-plannotator-tui@latest
+opencode plugin remove @nxxxsooo/opencode-annotate@latest
 ```
 
 ## Configuration
@@ -175,7 +176,7 @@ Set `binary` if Plannotator TUI is installed outside the terminal client's PATH:
 {
   "plugins": [
     {
-      "package": "opencode-plannotator-tui@latest",
+      "package": "@nxxxsooo/opencode-annotate@latest",
       "options": { "binary": "/path/to/plannotator-tui" }
     }
   ]
@@ -242,6 +243,6 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate 页面.html`、`/annotate https://…`、`/annotate web`：在 Chrome 中批注网页；`/annotate web off` 撤销配对。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 返回 →「Send and continue」。
 - 文档采用独立快照，反馈附原文件路径，确认后发回发起批注的会话。
-- 更新：`opencode plugin update opencode-plannotator-tui@latest`，然后重新打开终端客户端。
+- 更新：`opencode plugin update @nxxxsooo/opencode-annotate@latest`，然后重新打开终端客户端。
 
 MIT licensed. The annotation UI is maintained upstream by the Plannotator project.

@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 import shlex
+import socket as unix_socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -10,6 +12,8 @@ import time
 
 PLUGIN = Path(__file__).resolve().parent
 ENTRYPOINT = Path(os.environ.get("ANNOTATE_TUI_ENTRY", str(PLUGIN / "tui.ts"))).resolve().as_uri()
+BINARY_OPTIONS = {"binary": os.environ["ANNOTATE_TUI_BINARY"]} if os.environ.get("ANNOTATE_TUI_BINARY") else {}
+EXPECTED_MARGIN = int(os.environ.get("ANNOTATE_EXPECT_MARGIN", "0"))
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
 root = Path(tempfile.mkdtemp(prefix="annotate-last-smoke-", dir=TMP)).resolve()
@@ -58,7 +62,12 @@ def open_review(label, command="/annotate-last", filename="last-reply.md"):
     # The trailing space leaves slash completion and submits the optional argument slot.
     literal(command + " ")
     keys("Enter")
-    wait(filename + " · 0 annotations", label)
+    output = wait(filename + " · 0 annotations", label)
+    if EXPECTED_MARGIN:
+        for row in output.splitlines():
+            cells = row.ljust(140)
+            assert not cells[:EXPECTED_MARGIN].strip(), f"Left margin: {row!r}"
+            assert not cells[-EXPECTED_MARGIN:].strip(), f"Right margin: {row!r}"
 
 
 def annotate(note, label):
@@ -107,7 +116,7 @@ export default {{
         "title": "Annotate-last isolated smoke test", "location": {"directory": str(root)},
     })["data"]["id"]
     inline = json.dumps({
-        "plugins": [str(fixture)], "animations": False,
+        "plugins": [{"package": str(fixture), "options": BINARY_OPTIONS}], "animations": False,
         "theme": {"name": "dracula", "mode": "dark"},
         "debug": {"devtools": False}, "tabs": {"mode": "off"},
     })
@@ -175,10 +184,41 @@ export default {{
     assert "msg_smoke_older" in previous_inbox
     assert "SMOKE previous reply feedback" in previous_inbox
 
+    # Browser review opens a local receiver without a model call or visible browser.
+    literal("/annotate web ")
+    keys("Enter")
+    wait("Ready for browser pairing", "web-pairing")
+    registry = Path.home() / ".local/share/opencode-annotate/targets"
+    target = next(json.loads(p.read_text()) for p in registry.glob("*.json")
+                  if json.loads(p.read_text()).get("sessionID") == session)
+    batch = {"action": "send", "targetID": target["id"], "batchID": "12345678-1234-1234-1234-123456789012",
+             "review": {"version": 1, "page": {"url": "https://example.test/review", "title": "Smoke page"},
+                        "annotations": [{"id": "smoke-note", "revision": 1, "kind": "comment",
+                                         "comment": "SMOKE browser exact-session feedback", "createdAt": "2026-10-19T00:00:00Z",
+                                         "anchor": {"type": "text", "quote": "Alpha", "selector": "#alpha"}}]}}
+    def send_batch():
+        with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as connection:
+            connection.settimeout(20)
+            connection.connect(target["socket"])
+            body = json.dumps(batch).encode()
+            connection.sendall(struct.pack("<I", len(body)) + body)
+            header = connection.recv(4)
+            size = struct.unpack("<I", header)[0]
+            data = b""
+            while len(data) < size:
+                data += connection.recv(size - len(data))
+            return json.loads(data)
+    receipt = send_batch()
+    assert receipt["state"] == "admitted", receipt
+    assert send_batch() == receipt
+    web_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
+    assert "SMOKE browser exact-session feedback" in web_inbox
+    assert receipt["messageID"] in web_inbox
+
     print(json.dumps({"passed": ["real TUI launch", "create annotation", "terminal restore",
                                   "confirmed API delivery", "empty review", "cancelled review",
                                   "document path arguments", "document API delivery", "last fixed to latest",
-                                  "numbered reply API delivery"],
+                                   "numbered reply API delivery", "browser pairing", "browser API delivery", "retry deduplication"],
                       "evidence": str(root)}, ensure_ascii=False))
 finally:
     tmux("kill-server", check=False)

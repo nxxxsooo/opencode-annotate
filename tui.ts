@@ -2,7 +2,7 @@ import { Plugin } from "@opencode/plugin/tui"
 import { createReviewCommand } from "./review.mjs"
 
 export default Plugin.define({
-  id: "opencode-plannotator-tui",
+  id: "opencode-annotate",
   setup(context) {
     const review = createReviewCommand(context)
     // 2.0.22's keymap.layer needs the mounted provider; newer hosts also allow setup().
@@ -12,18 +12,18 @@ export default Plugin.define({
         context.keymap.layer(() => ({
           mode: "global",
           commands: [{
-            id: "opencode-plannotator-tui.annotate",
-            title: "Annotate reply or document (TUI)",
-            description: "Annotate a reply (1 = latest, 2 = previous) or a file; press q, then confirm to send",
-            group: "Plannotator",
+            id: "opencode-annotate.annotate",
+            title: "Annotate reply, document, or webpage",
+            description: "Text defaults to TUI; explicit HTML, URL or web pairs browser review",
+            group: "Annotate",
             palette: true,
             slash: { name: "annotate", arguments: true },
             run: review.run,
           }, {
-            id: "opencode-plannotator-tui.annotate-last",
+            id: "opencode-annotate.annotate-last",
             title: "Annotate last reply (TUI)",
             description: "Annotate the latest completed reply; press q, then confirm to send",
-            group: "Plannotator",
+            group: "Annotate",
             palette: true,
             // Keep slash submission with a trailing space local to the command.
             // Any supplied argument is deliberately ignored: this always means latest.

@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
+import { createWebReview } from "./web-review.mjs"
+import { wantsBrowser } from "./targets.mjs"
 
 const execute = promisify(execFile)
 const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
@@ -111,6 +113,7 @@ async function interactive({ binary, file, cwd, env, signal }) {
 }
 
 export function createReviewCommand(context, options = {}) {
+  const web = createWebReview(context, options.web)
   const binary = options.binary ?? context.options.binary ?? "plannotator-tui"
   const runInteractive = options.interactive ?? interactive
   let active
@@ -135,6 +138,10 @@ export function createReviewCommand(context, options = {}) {
       // The UI cache contains only a recent page; a long tool run can push the last
       // completed reply out of it. Read the session-scoped history, newest first.
       const target = input.trim()
+      if (wantsBrowser(target)) {
+        await web.run(target, sessionID)
+        return
+      }
       const numeric = target !== "" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(target)
       const position = numeric ? Number(target) : 1
       if (numeric && (!/^\d+$/.test(target) || !Number.isSafeInteger(position) || position < 1)) {
@@ -173,13 +180,12 @@ export function createReviewCommand(context, options = {}) {
         PLANNOTATOR_TUI_THEME: context.themeMode === "light" ? "light" : "dark",
       })
       context.ui.dialog.clear()
-      context.renderer.suspend()
+      // OpenCode 2.1.1+ suspends and resumes asynchronously; resume forces a full repaint.
+      await context.renderer.suspend()
       try {
-        context.renderer.currentRenderBuffer.clear()
         await runInteractive({ binary, file, cwd: directory, env, signal: controller.signal })
       } finally {
-        context.renderer.currentRenderBuffer.clear()
-        context.renderer.resume()
+        await context.renderer.resume()
         context.renderer.requestRender()
       }
       if (controller.signal.aborted) return
@@ -240,6 +246,7 @@ export function createReviewCommand(context, options = {}) {
     dispose() {
       disposed = true
       active?.abort()
+      return web.dispose()
     },
   }
 }

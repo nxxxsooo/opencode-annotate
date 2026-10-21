@@ -1,5 +1,17 @@
 # Releasing
 
+## Package identity
+
+The project is named OpenCode Annotate, but it publishes as `opencode-plannotator-tui`
+from `nxxxsooo/opencode-plannotator-tui`. The npm name `opencode-annotate` belongs to an
+unrelated package. Renaming the package or repository would need a new npm bootstrap
+and a new Trusted Publisher binding.
+
+To switch a maintainer installation from a local checkout back to npm, run
+`node scripts/install-plugin.mjs --undo <cli-before.json>` with the private backup under
+`.local/migration/`, or replace the checkout path in `cli.json` with
+`opencode-plannotator-tui@latest`. Reopen the terminal client.
+
 The npm package, Git tag and GitHub Release use the same semver. The maintained
 source is this repository; OpenCode installs the published npm artifact.
 

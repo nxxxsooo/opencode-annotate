@@ -4,3 +4,4 @@ node_modules/
 __pycache__/
 .local/
 .DS_Store
+test-results/

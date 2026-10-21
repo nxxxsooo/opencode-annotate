@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.2 — OpenCode Annotate
+
+The project is now called OpenCode Annotate. It is still published as
+`opencode-plannotator-tui`, because the npm name `opencode-annotate` belongs to an
+unrelated package.
+
+- Fix `/annotate` on OpenCode 2.1.1: the terminal stayed blank and Plannotator TUI
+  never opened, so Ctrl+C then quit the OpenCode client. The plugin now waits for
+  the renderer to suspend and resume.
+- Add webpage review: `/annotate page.html`, `/annotate https://…`, `/annotate web`
+  and `/annotate web off`, with an Annotate HTML-derived Chrome companion and
+  exact-session Native Messaging delivery. Text review is unchanged.
+- The browser companion shows live sessions automatically, preselects a sole target
+  without sending, saves the current note on **Send & continue**, keeps drafts per URL,
+  and filters private values and hidden text from exported context.
+
 ## 0.3.0
 
 - Select older completed replies with `/annotate 2`, `/annotate 3`, and so on.

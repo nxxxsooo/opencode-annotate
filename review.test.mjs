@@ -40,10 +40,9 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
   const ctx = {
     options: {}, themeMode: "dark", location: { directory: "/wrong-client-directory" },
     renderer: {
-      suspend() { transitions.push("suspend") },
-      resume() { transitions.push("resume") },
+      async suspend() { await null; transitions.push("suspend") },
+      async resume() { await null; transitions.push("resume") },
       requestRender() { transitions.push("render") },
-      currentRenderBuffer: { clear() {} },
     },
     data: { session: {
       get: () => ({ title: "Original session" }),

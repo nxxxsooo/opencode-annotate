@@ -17,14 +17,25 @@ source is this repository; OpenCode installs the published npm artifact.
 
 ## Bootstrap
 
-For a package that does not yet exist on npm, publish its first version from an
-authenticated maintainer terminal with `npm publish --access public`, completing
-the registry's 2FA flow. Then configure a GitHub Actions Trusted Publisher for:
+A package name that does not exist on npm yet starts with one direct publish from the
+maintainer's terminal. With CI green on a clean commit, run this as one block:
 
-- Repository: `nxxxsooo/opencode-annotate`
-- Workflow: `publish.yml`
-- Allowed action: npm publish
-- Environment: blank
+```sh
+npm login
+npm publish --access public
+npm trust github @nxxxsooo/opencode-annotate --file publish.yml --repo nxxxsooo/opencode-annotate --allow-publish --yes
+```
+
+For a rename, add `npm deprecate <old-package> "Renamed to <new-package>"`.
+
+npm 12.2 behaves as follows:
+
+- It processes a new package asynchronously. A `0.0.0-stage` placeholder appears at once, and the real version follows a few minutes later.
+- `npm view` returns 404 until the real version arrives.
+- `npm trust` succeeds right after the publish and grants `publish, stage publish`.
+
+Push the matching tag afterwards. `publish.yml` verifies the bootstrap archive and skips the upload.
+This was done for 0.5.0 on 2026-10-21 (trust id `8bb95722`).
 
 Keep publishing protected by 2FA and use OIDC for subsequent automated releases.
 No npm token belongs in the workflow or repository. The bootstrap release is not

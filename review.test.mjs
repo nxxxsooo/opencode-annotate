@@ -40,6 +40,10 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
   const ctx = {
     options: {}, themeMode: "dark", location: { directory: "/wrong-client-directory" },
     renderer: {
+      listeners: new Map(),
+      on(name, listener) { this.listeners.set(name, listener) },
+      off(name, listener) { if (this.listeners.get(name) === listener) this.listeners.delete(name) },
+      select(text) { this.listeners.get("selection")?.({ getSelectedText: () => text }) },
       async suspend() { await null; transitions.push("suspend") },
       async resume() { await null; transitions.push("resume") },
       requestRender() { transitions.push("render") },
@@ -211,46 +215,81 @@ async function documentFolder(t) {
   return directory
 }
 
-test("numbered replies count eligible messages across pages and target the selected reply", async t => {
-  const text = "# Older reply\n\nAlpha paragraph.\n"
-  const h = await harness(t, { expectedText: text })
-  let calls = 0
+const progress = "# Progress\n\nFlash timing **first**. Alpha paragraph.\n"
+function history(h) {
   h.ctx.client.message.list = async input => {
     assert.equal(input.sessionID, "ses_original")
-    if (++calls === 1) return { data: [reply("new", "Newest"), reply("tool", "Working", { finish: "tool-calls" })], cursor: { next: "older" } }
-    assert.equal(input.cursor, "older")
-    return { data: [reply("old", text)], cursor: {} }
+    return { data: [
+      reply("msg_final", "# Review fixture\n\nAlpha paragraph.\n", { time: { created: 300, completed: 301 } }),
+      reply("msg_progress", progress, { time: { created: 200, completed: 201 }, finish: "tool-calls" }),
+      reply("msg_live", "Not finished", { time: { created: 400 } }),
+    ], cursor: {} }
   }
+}
+
+test("numbered replies are retired in favor of the picker", async t => {
+  const h = await harness(t)
   await h.command.run("2")
-  assert.equal(calls, 2)
-  assert.equal(h.sent.length, 1)
-  assert.match(h.sent[0].text, /your reply old\./)
+  assert.deepEqual(h.transitions, [])
+  assert.equal(h.pages(), 0)
+  assert.ok(h.notices.some(n => n.variant === "error" && /annotate-pick/.test(n.message)))
 })
 
-test("explicit 1 reviews the latest reply", async t => {
+test("webpages route to /annotate-web instead of /annotate", async t => {
   const h = await harness(t)
-  await h.command.run("1")
-  assert.equal(h.sent.length, 1)
-  assert.match(h.sent[0].text, /msg_final/)
+  await h.command.run("https://example.com")
+  assert.deepEqual(h.transitions, [])
+  assert.ok(h.notices.some(n => n.variant === "error" && /annotate-web/.test(n.message)))
 })
 
-test("insufficient history does not fall back to another reply", async t => {
+test("the picker offers progress updates and sends feedback on the chosen one", async t => {
+  const h = await harness(t, { expectedText: progress })
+  history(h)
+  let offered
+  h.ctx.ui.dialog.select = async input => {
+    offered = input.options
+    return "msg_progress"
+  }
+  await h.command.pick()
+  assert.deepEqual(offered.map(option => option.value), ["msg_final", "msg_progress"])
+  assert.match(offered[1].description, /^Progress update · /)
+  assert.equal(h.sent.length, 1)
+  assert.match(h.sent[0].text, /your progress update msg_progress\./)
+})
+
+test("a cancelled picker opens nothing", async t => {
   const h = await harness(t)
-  await h.command.run("3")
+  history(h)
+  h.ctx.ui.dialog.select = async () => undefined
+  await h.command.pick()
   assert.deepEqual(h.transitions, [])
   assert.deepEqual(h.sent, [])
-  assert.ok(h.notices.some(n => /reply 3/.test(n.message)))
 })
 
-for (const input of ["0", "-1", "1.5", "9007199254740992"]) {
-  test(`invalid reply number ${input} is rejected before history lookup`, async t => {
-    const h = await harness(t)
-    await h.command.run(input)
-    assert.equal(h.pages(), 0)
-    assert.deepEqual(h.transitions, [])
-    assert.ok(h.notices.some(n => /positive integer/.test(n.message)))
-  })
-}
+test("a transcript selection opens the message containing it, ignoring rendered markup", async t => {
+  const h = await harness(t, { expectedText: progress })
+  history(h)
+  h.ctx.renderer.select("Flash timing\nfirst.")
+  await h.command.selection()
+  assert.equal(h.sent.length, 1)
+  assert.match(h.sent[0].text, /your progress update msg_progress\./)
+})
+
+test("an unmatched selection is annotated on its own", async t => {
+  const h = await harness(t, { expectedText: "Alpha paragraph. Not in history" })
+  history(h)
+  h.ctx.renderer.select("Alpha paragraph. Not in history")
+  await h.command.selection()
+  assert.equal(h.sent.length, 1)
+  assert.match(h.sent[0].text, /text I selected in this session/)
+})
+
+test("without a selection in this session nothing opens", async t => {
+  const h = await harness(t)
+  await h.command.selection()
+  assert.deepEqual(h.transitions, [])
+  assert.ok(h.notices.some(n => /Select text/.test(n.message)))
+})
 
 test("a quoted relative document uses the captured session directory and returns its source path", async t => {
   const sessionDir = await documentFolder(t)

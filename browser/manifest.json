@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OpenCode Annotate",
-  "version": "0.4.1",
+  "version": "0.6.0",
   "description": "Annotate HTML-based page feedback, private drafts, and paired OpenCode delivery.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp7TG2yzekNKpQvHBtj4jqkOxtoeDIBhNIjPi37Os/ksuhzPp1pHnrJPV4WV2ToatUaD5x5/SpLP8qZKLBD+wuraEE/TeclEZ8HvEs1yhlnx/S7piTG/s0eV5umuTEx2w66Hi0w3dhTC7ZZfJXCLyqs1feBtWzQx6ClgaHNYly4iJ03pV7RfguqpIaG9LV8Oa8ELA+7Ubr0BAujXrSlvqLF5oAKGoXXcpvTL5rgMRIH4Q/85tnvrk0pRVg+1z9IGNzSfjN82iveC/JAriyWABp8YuswtvKfI2Wb+KspaisBh39Y3BRqlyo8I2Cr+01uE6G5pWiJIWMLhe0glrMr5I2wIDAQAB",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel", "nativeMessaging"],

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.0 — annotate any session text
+
+### Text review
+
+- Add `/annotate-pick` to choose among recent replies and mid-turn progress updates, and
+  `/annotate-selection` to review the message containing the last transcript selection.
+- Move browser review to `/annotate-web` (pairing, URL, HTML file or `off`); `/annotate`
+  now handles replies and documents only. Retire numbered `/annotate N`.
+
+### Inherited TUI colors
+
+- Add opt-in `inheritTheme` support for the color-capable Plannotator fork, including
+  the OpenCode canvas, text, Markdown, borders, selection and cursor contrast pairs.
+  Inherited colors also cover strong/emphasis text, list markers, rules, link labels,
+  table headers and the send button.
+- Validate a private per-review configuration before suspending the terminal; preserve
+  the user's layout settings, including the fork's `doc_width`, and keep the themed
+  config with recoverable drafts.
+
+### Compact browser workspace
+
+- Replace the always-expanded browser form with a selection-focused composer, numbered
+  note queue, and persistent destination/delivery bar; keep controls visible at narrow widths and zoom.
+- Autosave unfinished feedback by page, recover it after navigation or panel reload, and
+  protect selection changes and competing-panel edits with explicit draft choices.
+- Fix cancelling and reselecting the same element, add safe Show on page and revision-aware
+  deletion Undo, and keep the intended destination visible while disconnected.
+- Show pending/sent counts, distinguish original-batch retries from new feedback, and move
+  copy/export/context utilities into More review options. **Save note** is now **Add note**.
+
 ## 0.5.0 — new package name
 
 - Publish as `@nxxxsooo/opencode-annotate` from `nxxxsooo/opencode-annotate`. The old

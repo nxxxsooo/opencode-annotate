@@ -23,7 +23,36 @@ async function current() {
   const notes = Object.entries(storage).filter(([key, value]) => key.startsWith(`note:${hash}:`) && !value.deleted).map(([, value]) => value).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
   let anchorStates = notes.map(() => "unavailable")
   try { anchorStates = (await chrome.tabs.sendMessage(tab.id, { action: "locate", anchors: notes.map(note => note.anchor) })).states } catch { /* visibly unavailable while navigating */ }
-  return { tabID: tab.id, ...state, notes, anchorStates, hash }
+  const draft = storage[`draft:${hash}`] || { revision: 0, value: null }
+  const outbox = storage[`outbox:${hash}`]
+  let draftAnchorState
+  if (draft.value) {
+    try { draftAnchorState = (await chrome.tabs.sendMessage(tab.id, { action: "locate", anchors: [draft.value.anchor] })).states[0] }
+    catch { draftAnchorState = "unavailable" }
+  }
+  return { tabID: tab.id, ...state, notes, anchorStates, hash, draft, draftAnchorState,
+    outbox: outbox ? { targetID: outbox.targetID, count: outbox.review.annotations.length } : null }
+}
+function draftConflict(draft) {
+  return Object.assign(new Error("This draft changed in another panel. Choose which version to keep."), { code: "draft-conflict", draft })
+}
+function validateDraft(page, draft) {
+  if (draft === null) return
+  if (!draft || typeof draft.comment !== "string" || draft.comment.length > 8000 || !["comment", "ask"].includes(draft.kind)) throw new Error("Invalid draft")
+  validateReview({ version: 1, page, annotations: [{ id: "draft", revision: 1, createdAt: new Date().toISOString(),
+    kind: draft.kind, comment: draft.comment.trim() || "Draft", anchor: draft.anchor }] })
+  if (draft.editing) validateReview({ version: 1, page, annotations: [draft.editing] })
+  consumedCaptures({}, draft.captures)
+}
+function consumedCaptures(previous, captures) {
+  const result = { ...previous }
+  if (!captures) return result
+  if (typeof captures !== "object" || Array.isArray(captures)) throw new Error("Invalid capture acknowledgement")
+  for (const [tab, id] of Object.entries(captures)) {
+    if (!Number.isSafeInteger(Number(tab)) || Number(tab) < 0 || String(Number(tab)) !== tab || typeof id !== "string" || !id) throw new Error("Invalid capture acknowledgement")
+    result[tab] = id
+  }
+  return result
 }
 async function handle(message, sender) {
   if (message.action === "capture") {
@@ -31,18 +60,39 @@ async function handle(message, sender) {
     const key = `tab:${sender.tab.id}`
     const previous = (await chrome.storage.session.get(key))[key] || {}
     await chrome.storage.session.set({ [key]: { ...previous, page: { url: safeUrl(message.page.url), title: String(message.page.title).slice(0, 500) }, picking: !!message.picking,
-      ...(!message.modeOnly ? { anchor: message.anchor, error: message.error } : {}) } })
+      ...(!message.modeOnly ? { anchor: message.anchor, error: message.error, captureID: crypto.randomUUID() } : {}) } })
     return {}
   }
   if (sender.url && !sender.url.startsWith(chrome.runtime.getURL(""))) throw new Error("Only the extension panel can manage feedback")
   if (message.action === "current") return current()
+  if (message.action === "draft") return serial(async () => {
+    // A route change must still be able to persist the previous page's draft.
+    if (!message.page || safeUrl(message.page.url) !== message.page.url || typeof message.page.title !== "string" ||
+        typeof message.writerID !== "string" || !message.writerID || !Number.isSafeInteger(message.sequence) || message.sequence < 1 ||
+        !Number.isSafeInteger(message.baseRevision) || message.baseRevision < 0) throw new Error("Invalid draft update")
+    validateDraft(message.page, message.value)
+    const key = `draft:${await pageKey(message.page.url)}`
+    const old = (await chrome.storage.local.get(key))[key] || { revision: 0, value: null }
+    if (old.writerID === message.writerID && old.sequence >= message.sequence) return { draft: old }
+    if (old.revision !== message.baseRevision && old.writerID !== message.writerID) throw draftConflict(old)
+    const draft = { revision: old.revision + 1, value: message.value, writerID: message.writerID,
+      consumedCaptures: consumedCaptures(old.consumedCaptures, message.value === null ? message.captures : null),
+      sequence: message.sequence, updatedAt: new Date().toISOString() }
+    await chrome.storage.local.set({ [key]: draft })
+    return { draft }
+  })
   if (message.action === "targets") return chrome.runtime.sendNativeMessage(HOST, { action: "targets" })
   if (message.action === "connection") {
-    const result = await chrome.runtime.sendNativeMessage(HOST, { action: "targets" })
-    if (!result.ok) throw new Error(result.error)
     const { paired } = await chrome.storage.local.get("paired")
+    let result
+    try {
+      result = await chrome.runtime.sendNativeMessage(HOST, { action: "targets" })
+      if (!result.ok) throw new Error(result.error)
+    } catch (error) {
+      return { targets: [], target: null, destination: paired || null, stale: !!paired, error: error.message }
+    }
     const target = paired ? result.targets.find(target => target.id === paired.id) : result.targets.length === 1 ? result.targets[0] : null
-    return { targets: result.targets, target: target || null, stale: !!paired && !target }
+    return { targets: result.targets, target: target || null, destination: target || paired || null, stale: !!paired && !target }
   }
   if (message.action === "pair") {
     const result = await chrome.runtime.sendNativeMessage(HOST, { action: "info", targetID: message.target.id })
@@ -54,14 +104,42 @@ async function handle(message, sender) {
   const state = await current()
   if (message.url && message.url !== state.page.url) throw new Error("The active page changed; retry on the original page")
   if (message.action === "pick") return chrome.tabs.sendMessage(state.tabID, { action: "pick" })
-  if (message.action === "save" || message.action === "delete") return serial(async () => {
+  if (message.action === "reveal") {
+    const note = state.notes.find(note => note.id === message.noteID)
+    if (!note) throw new Error("This note is no longer on the page")
+    const result = await chrome.tabs.sendMessage(state.tabID, { action: "reveal", anchor: note.anchor })
+    if (!result.ok) throw new Error(result.error)
+    return result
+  }
+  if (["save", "delete", "restore"].includes(message.action)) return serial(async () => {
     const key = `note:${state.hash}:${message.note.id}`
     const old = (await chrome.storage.local.get(key))[key]
-    if ((old?.revision || 0) !== message.baseRevision) throw new Error("This note changed in another tab; refresh and retry")
-    const note = { ...message.note, page: state.page, revision: (old?.revision || 0) + 1, deleted: message.action === "delete" }
+    if ((old?.revision || 0) !== message.baseRevision) throw Object.assign(new Error("This note changed in another tab. Choose which version to keep."), { code: "note-conflict", note: old || null })
+    if (message.action !== "save" && !old) throw new Error("This note no longer exists")
+    if (message.action === "restore" && !old.deleted) throw new Error("This note has already been restored")
+    const note = { ...(message.action === "save" ? message.note : old), page: state.page,
+      revision: (old?.revision || 0) + 1, deleted: message.action === "delete" }
+    if (message.action === "delete") note.wasSent = old.sentRevision === old.revision
+    else if (message.action === "restore") {
+      if (old.wasSent) note.sentRevision = note.revision
+      delete note.wasSent
+    } else {
+      note.sentRevision = old?.sentRevision
+      delete note.wasSent
+    }
     validateReview({ version: 1, page: state.page, annotations: [note] })
     if (!old && state.notes.length >= 200) throw new Error("This page has 200 notes; export and remove some first")
-    await chrome.storage.local.set({ [key]: note }); return { note }
+    const updates = { [key]: note }
+    let draft
+    if (message.draftRevision !== undefined) {
+      const draftKey = `draft:${state.hash}`
+      const previous = (await chrome.storage.local.get(draftKey))[draftKey] || { revision: 0, value: null }
+      if (previous.revision !== message.draftRevision) throw draftConflict(previous)
+      draft = { ...previous, revision: previous.revision + 1, value: null,
+        consumedCaptures: consumedCaptures(previous.consumedCaptures, message.captures), updatedAt: new Date().toISOString() }
+      updates[draftKey] = draft
+    }
+    await chrome.storage.local.set(updates); return { note, draft }
   })
   if (message.action === "markers") return chrome.tabs.sendMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.anchor })) })
   if (message.action === "send") return serial(async () => {
@@ -100,6 +178,6 @@ async function handle(message, sender) {
   throw new Error("Unknown annotation action")
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  handle(message, sender).then(result => respond({ ok: true, ...result }), error => respond({ ok: false, error: error.message }))
+  handle(message, sender).then(result => respond({ ok: true, ...result }), error => respond({ ok: false, error: error.message, code: error.code, draft: error.draft, note: error.note }))
   return true
 })

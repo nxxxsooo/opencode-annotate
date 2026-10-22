@@ -1,155 +1,435 @@
 import { markdown, validateReview } from "./protocol.mjs"
+
 const $ = id => document.getElementById(id)
-let state, anchor, editing, targets = [], paired, pageURL, capturedIdentity, lastPageError, connectionBusy = false
-let refreshID = 0, connectionRevision = 0
-const busy = new Set()
 const make = (tag, text = "") => { const node = document.createElement(tag); node.textContent = text; return node }
-function status(text, error = false) { $("status").textContent = text; $("status").classList.toggle("error", error) }
+const clone = value => structuredClone(value)
+const writerID = crypto.randomUUID(), models = new Map(), busy = new Set()
+let state, model, destination, available, targets = [], connectionError = "", connectionLoading = true
+let refreshID = 0, connectionRevision = 0, connectionBusy = false, scheduledRefresh
+let pendingAction, pendingFocus, undoRecord, selectedNoteID, noteRenderKey, connectionOptionsKey, notice
+
+function icon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+  svg.setAttribute("class", "icon"); svg.setAttribute("aria-hidden", "true")
+  const use = document.createElementNS(svg.namespaceURI, "use"); use.setAttribute("href", `#icon-${name}`)
+  svg.append(use); return svg
+}
 async function call(data) {
   const result = await chrome.runtime.sendMessage(data)
-  if (!result?.ok) throw new Error(result?.error || "Extension disconnected; reopen the panel")
+  if (!result?.ok) throw Object.assign(new Error(result?.error || "Extension disconnected; reopen the panel"), { code: result?.code, draft: result?.draft, note: result?.note })
   return result
 }
-function task(id, fn) {
-  $(id).addEventListener("click", async () => {
-    busy.add(id); $(id).disabled = true; controls()
-    try { await fn() } catch (error) { status(error.message, true) } finally { busy.delete(id); $(id).disabled = false; controls() }
-  })
+function status(text, error = false, page = state?.page.url) { notice = text ? { text, error, page } : null; renderDelivery() }
+function focusWhenReady(selector, scroll = true) {
+  pendingFocus = { selector, scroll, page: state?.page.url }
+  flushFocus()
 }
-function controls() {
-  const saving = busy.has("save") || busy.has("send")
-  $("comment").disabled = $("kind").disabled = saving
-  $("save").disabled = !state || !anchor || !$("comment").value.trim()
-  $("send").disabled = !paired || !state || (!state.notes.some(n => n.sentRevision !== n.revision) && $("save").disabled)
-  if (saving) $("save").disabled = true
-  $("copy").disabled = $("export").disabled = !state?.notes.length
-  $("pick").disabled = !state
-  $("cancel").hidden = !editing && !anchor
-  for (const id of busy) $(id).disabled = true
+function flushFocus() {
+  if (!pendingFocus) return false
+  const request = pendingFocus, node = document.querySelector(request.selector)
+  if (request.page !== state?.page.url || !node || !node.getClientRects().length) { pendingFocus = null; return false }
+  if (node.disabled && busy.size) return false
+  pendingFocus = null
+  if (node.disabled) return false
+  node.focus({ preventScroll: true })
+  if (request.scroll) node.scrollIntoView({ block: "nearest" })
+  return true
 }
-function reset() { anchor = null; editing = null; $("comment").value = ""; $("kind").value = "comment"; $("quote").textContent = "Select text or an element to begin."; $("save").textContent = "Save note"; controls() }
-function review() { return validateReview({ version: 1, page: state.page, annotations: state.notes }) }
-function renderNotes() {
-  $("count").textContent = `${state.notes.length} notes`
-  $("notes").replaceChildren()
-  for (const [index, note] of state.notes.entries()) {
-    const li = make("li"), actions = make("div"); actions.className = "actions"
-    const edit = make("button", "Edit"), remove = make("button", "Delete")
-    edit.onclick = () => { editing = note; anchor = note.anchor; $("quote").textContent = anchor.quote; $("comment").value = note.comment; $("kind").value = note.kind; $("save").textContent = "Save changes"; controls(); $("comment").focus() }
-    remove.onclick = async () => {
-      try { await call({ action: "delete", url: state.page.url, note, baseRevision: note.revision }); if (editing?.id === note.id) reset(); await refresh() }
-      catch (error) { status(error.message, true) }
+async function run(id, fn) {
+  if (busy.has(id)) return
+  const previousFocus = document.activeElement, page = state?.page.url
+  busy.add(id); controls()
+  try { await fn() }
+  catch (error) {
+    if (model && ["draft-conflict", "note-conflict"].includes(error.code)) {
+      model.conflict = error; model.error = error
+      renderComposer()
     }
-    actions.append(edit, remove)
-    li.append(make("small", `${note.kind} · ${note.sentRevision === note.revision ? "sent" : "pending"} · ${state.anchorStates?.[index] || "unavailable"} · ${note.anchor.quote.slice(0, 100)}`), make("p", note.comment), actions)
-    $("notes").append(li)
+    status(error.message, true)
+  } finally {
+    busy.delete(id); if ($(id)) $(id).disabled = false; controls()
+    if (!flushFocus() && !pendingFocus && document.activeElement === document.body && page === state?.page.url &&
+        previousFocus?.isConnected && !previousFocus.disabled && previousFocus.getClientRects().length) previousFocus.focus({ preventScroll: true })
   }
-  $("preview").textContent = state.notes.length ? markdown(review()) : "No saved notes"
+}
+const task = (id, fn) => $(id).addEventListener("click", () => run(id, fn))
+function dirty(m = model) {
+  const value = m?.value
+  if (!value) return false
+  return value.editing ? value.comment.trim() !== value.editing.comment || value.kind !== value.editing.kind ||
+    anchorIdentity(value.anchor) !== anchorIdentity(value.editing.anchor) : !!value.comment.trim()
+}
+const validDraft = () => !!model?.value?.comment.trim() && dirty()
+const anchorIdentity = anchor => anchor ? JSON.stringify([anchor.type, anchor.selector, anchor.quote, anchor.prefix, anchor.suffix]) : ""
+function pendingCount() {
+  const pending = state?.notes.filter(note => note.sentRevision !== note.revision) || []
+  return pending.length + (validDraft() && !pending.some(note => note.id === model.value.editing?.id) ? 1 : 0)
+}
+function locked() { return ["save", "send", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft"].some(id => busy.has(id)) }
+function controls() {
+  const lock = locked()
+  $("comment").disabled = lock
+  for (const button of $("kind").querySelectorAll("button")) button.disabled = lock
+  $("save").disabled = lock || !state || !validDraft() || !!model?.conflict
+  $("save-switch").disabled = lock || !validDraft() || !!model?.conflict
+  $("pick").disabled = !state || lock
+  $("cancel").disabled = lock
+  for (const id of ["discard-switch", "keep-editing", "retry-draft", "reload-draft", "keep-draft", "copy-draft", "undo", "targets", "change-target", "refresh-targets"]) $(id).disabled = lock
+  $("copy").disabled = $("export").disabled = !state?.notes.length
+  for (const button of $("notes").querySelectorAll("button")) button.disabled = lock
+  for (const id of busy) if ($(id)) $(id).disabled = true
+  renderDelivery()
+}
+
+function modelFor(next) {
+  let m = models.get(next.page.url)
+  if (!m) {
+    m = { page: next.page, hash: next.hash, record: next.draft, value: clone(next.draft.value), sequence: 0,
+      acknowledged: 0, touched: false, pending: new Set(), captureID: null, error: null, conflict: null }
+    models.set(next.page.url, m)
+  } else mergeDraft(m, next.draft)
+  return m
+}
+function mergeDraft(m, record) {
+  if (record.revision <= m.record.revision) return
+  if (record.writerID !== writerID && (m.touched || m.pending.size)) {
+    m.conflict = Object.assign(new Error("This draft changed in another panel. Choose which version to keep."), { code: "draft-conflict", draft: record })
+    m.error = m.conflict
+    return
+  }
+  m.record = record
+  if (!m.touched && !m.pending.size) m.value = clone(record.value)
+}
+function persistDraft(m, value = m.value) {
+  if (m.conflict) return Promise.reject(m.conflict)
+  const sequence = ++m.sequence, snapshot = clone(value)
+  m.touched = true
+  const promise = call({ action: "draft", page: m.page, value: snapshot, writerID, sequence, baseRevision: m.record.revision,
+    ...(value === null ? { captures: m.value?.captures } : {}) })
+    .then(result => {
+      if (result.draft.revision > m.record.revision) m.record = result.draft
+      if (sequence === m.sequence && !m.conflict) { m.acknowledged = sequence; m.error = null }
+      return result.draft
+    }, error => {
+      if (error.code === "draft-conflict") m.conflict = error
+      if (sequence === m.sequence || m.conflict) m.error = error
+      throw error
+    }).finally(() => {
+      m.pending.delete(promise)
+      if (m === model) { renderComposer(); controls() }
+    })
+  m.pending.add(promise)
+  if (m === model) renderComposer()
+  return promise
+}
+async function flushDraft(m) {
+  await Promise.allSettled([...m.pending])
+  if (m.error || m.conflict) throw m.conflict || m.error
+}
+function openComposer(value) {
+  model.value = clone(value); model.error = null; model.conflict = null; model.touched = false
+  selectedNoteID = value.editing?.id || null; pendingAction = null; notice = null
+  // Selection is broadcast to every open panel. Only user edits claim a draft.
+  render(); focusWhenReady("#comment")
+}
+async function discardDraft() {
+  const m = model
+  await persistDraft(m, null)
+  m.value = null; m.touched = false; m.error = null
+  if (model === m) { pendingAction = null; selectedNoteID = null; notice = null; render() }
+}
+async function saveCurrent() {
+  const m = model
+  if (!validDraft()) return
+  await flushDraft(m)
+  const value = clone(m.value), now = new Date().toISOString()
+  const note = { id: value.editing?.id || crypto.randomUUID(), revision: (value.editing?.revision || 0) + 1,
+    createdAt: value.editing?.createdAt || now, updatedAt: now, kind: value.kind, comment: value.comment.trim(), anchor: value.anchor }
+  const result = await call({ action: "save", url: m.page.url, note, baseRevision: value.editing?.revision || 0,
+    draftRevision: m.record.revision, captures: value.captures })
+  m.record = result.draft; m.value = null; m.touched = false; m.error = null; m.conflict = null
+  if (model === m) { pendingAction = null; selectedNoteID = result.note.id }
+  await refresh(); status("Saved locally", false, m.page.url)
+}
+async function performAction(action) {
+  pendingAction = null
+  if (action.type === "select") openComposer({ anchor: action.anchor, captures: { [action.capture.tabID]: action.capture.id }, kind: "comment", comment: "", editing: null })
+  else if (action.type === "edit") {
+    const note = state.notes.find(note => note.id === action.id)
+    if (!note) throw new Error("This note has been removed; choose another note")
+    openComposer({ anchor: note.anchor, kind: note.kind, comment: note.comment, editing: note })
+  } else if (action.type === "delete") await deleteNote(action.id)
+}
+async function requestAction(action) {
+  if (dirty()) {
+    pendingAction = action; renderComposer(); controls()
+    $("switch-notice").scrollIntoView({ block: "nearest" })
+  } else await performAction(action)
+}
+async function deleteNote(id) {
+  const note = state.notes.find(note => note.id === id), m = model
+  if (!note) throw new Error("This note has already been removed")
+  const clearDraft = m.value?.editing?.id === id
+  if (clearDraft) await flushDraft(m)
+  const result = await call({ action: "delete", url: state.page.url, note, baseRevision: note.revision,
+    ...(clearDraft ? { draftRevision: m.record.revision, captures: m.value.captures } : {}) })
+  if (clearDraft) { m.record = result.draft; m.value = null; m.touched = false }
+  undoRecord = { note: result.note, url: state.page.url }
+  await refresh(); focusWhenReady("#undo")
+}
+
+function renderComposer() {
+  const value = model?.value
+  $("composer").hidden = !value
+  $("empty-state").hidden = !!value || !!state?.notes.length
+  if (!value) return
+  $("composer-title").textContent = value.editing ? "Edit note" : "New note"
+  $("quote").textContent = value.anchor.quote
+  if ($("comment").value !== value.comment) $("comment").value = value.comment
+  for (const button of $("kind").querySelectorAll("button")) {
+    const selected = button.dataset.kind === value.kind
+    button.setAttribute("aria-checked", String(selected)); button.tabIndex = selected ? 0 : -1
+  }
+  $("save-label").textContent = value.editing ? "Save changes" : "Add note"
+  $("draft-state").textContent = model.error ? "Draft not saved" : model.pending.size ? "Saving draft…" : value.editing && !dirty() ? "No changes yet" : value.comment.trim() ? "Draft saved locally" : "Only saved on your device"
+  $("switch-notice").hidden = !pendingAction
+  $("switch-description").textContent = pendingAction?.type === "delete" ? "Save your changes before removing this note, or keep editing." : "Add this feedback to your notes before switching, or keep editing."
+  $("save-switch").textContent = `${value.editing ? "Save" : "Add"} & ${pendingAction?.type === "delete" ? "continue" : "switch"}`
+  $("discard-switch").textContent = `Discard & ${pendingAction?.type === "delete" ? "continue" : "switch"}`
+  $("draft-error").hidden = !model.error
+  $("draft-error-text").textContent = model.error?.message || ""
+  $("retry-draft").hidden = !!model.conflict
+  $("reload-draft").hidden = $("keep-draft").hidden = !model.conflict
+  $("reload-draft").textContent = model.conflict?.code === "note-conflict" ? "Load saved note" : "Load saved draft"
+  const anchorState = state?.draftAnchorState
+  const sameStoredAnchor = anchorIdentity(state?.draft.value?.anchor) === anchorIdentity(value.anchor)
+  $("anchor-warning").hidden = !sameStoredAnchor || !anchorState || anchorState === "located"
+  $("anchor-warning").textContent = `Element ${anchorState}. Your draft is kept.`
+}
+function renderNotes() {
+  const notes = state?.notes || [], pending = notes.filter(note => note.sentRevision !== note.revision).length
+  $("notes-section").hidden = !notes.length
+  $("count").textContent = pending ? `${pending} pending` : `${notes.length} sent`
+  const key = JSON.stringify([notes, state?.anchorStates, selectedNoteID])
+  if (key === noteRenderKey) return
+  noteRenderKey = key; $("notes").replaceChildren()
+  for (const [index, note] of notes.entries()) {
+    const item = make("li"), number = make("span", index + 1), content = make("div"), target = make("button"), bottom = make("div"), meta = make("span")
+    item.className = `note${selectedNoteID === note.id ? " is-current" : ""}`; item.dataset.noteId = note.id
+    number.className = "note-number"; number.setAttribute("aria-label", `Note ${index + 1}`)
+    target.className = "note-target"; target.setAttribute("aria-label", `Show note ${index + 1} on page`)
+    target.append(make("span", note.anchor.quote.slice(0, 200)), icon("reveal"))
+    target.onclick = () => run("reveal", async () => {
+      await call({ action: "reveal", url: state.page.url, noteID: note.id }); selectedNoteID = note.id
+      status("Element highlighted on the page"); renderNotes()
+      $("notes").querySelector(`[data-note-id="${CSS.escape(note.id)}"] .note-target`)?.focus({ preventScroll: true })
+    })
+    const comment = make("p", note.comment); comment.className = "note-comment"
+    content.append(target, comment)
+    const anchorState = state.anchorStates[index]
+    if (anchorState !== "located") { const warning = make("p", `Element ${anchorState}. Your feedback is kept.`); warning.className = "warning"; content.append(warning) }
+    bottom.className = "note-bottom"; meta.className = "note-meta"
+    if (note.kind === "ask") meta.append(make("span", "Question"))
+    if (note.sentRevision === note.revision) { const sent = make("span"); sent.className = "sent-mark"; sent.append(icon("check"), make("span", "Sent")); meta.append(sent) }
+    else meta.append(make("span", "Pending"))
+    const edit = make("button", "Edit"), remove = make("button")
+    edit.className = "text-button"; edit.setAttribute("aria-label", `Edit note ${index + 1}`)
+    edit.onclick = () => run("edit", () => requestAction({ type: "edit", id: note.id }))
+    remove.className = "icon-button"; remove.title = "Delete note"; remove.setAttribute("aria-label", `Delete note ${index + 1}`); remove.append(icon("trash"))
+    remove.onclick = () => run("delete", () => model?.value?.editing?.id === note.id ? requestAction({ type: "delete", id: note.id }) : deleteNote(note.id))
+    bottom.append(meta, edit, remove); content.append(bottom); item.append(number, content); $("notes").append(item)
+  }
+  $("preview").textContent = notes.length ? markdown(review()) : "Add a note to preview the feedback."
   call({ action: "markers" }).catch(() => {})
+}
+function renderDelivery() {
+  const retry = state?.outbox, count = retry?.count ?? pendingCount(), connected = !!available, sending = busy.has("send") && connected
+  const wrongDestination = retry && retry.targetID !== destination?.id
+  const allSent = !!state?.notes.length && !count && !model?.value && !retry
+  $("paired").textContent = destination?.title || (connectionLoading ? "Looking for your session…" : "Choose a session")
+  $("change-target").title = destination ? `${destination.title}\n${destination.directory}` : "Choose where to send feedback"
+  $("send-label").textContent = sending ? "Sending…" : !connected ? destination ? "Reconnect session" : "Connect a session" : !state ? "Open a page to send" : wrongDestination ? "Choose original session" : count ? `${retry ? "Retry" : "Send"} ${count} note${count === 1 ? "" : "s"} & continue` : allSent ? "All notes sent" : "Send & continue"
+  $("send").disabled = locked() || connectionLoading || (connected && (!state || !count || (!retry && !!model?.conflict)))
+  $("send-arrow").toggleAttribute("hidden", !connected || !count || sending)
+  $("send-check").toggleAttribute("hidden", !connected || !allSent)
+  const currentNotice = notice && (!notice.page || notice.page === state?.page.url) ? notice : null
+  $("status").classList.toggle("error", !!currentNotice?.error)
+  $("status").classList.toggle("success", !currentNotice?.error && allSent && connected)
+  $("status").textContent = currentNotice?.text || (connectionLoading ? "Looking for your OpenCode session…" : sending ? "Queuing feedback for the selected session…" :
+    !connected ? connectionError ? "Connection unavailable · open session options." : destination ? "Disconnected · your notes stay saved." : "Choose where to send your feedback." :
+    allSent ? "Feedback delivered · continue in OpenCode" : wrongDestination ? "This batch belongs to the previous session." : retry ? "Retry the previous batch. New feedback stays local." : validDraft() ? "Includes your current feedback." : count ? "Only pending notes will be sent." : "Feedback stays local until you send.")
+}
+function render() {
+  renderComposer(); renderNotes()
+  $("undo-notice").hidden = !undoRecord || undoRecord.url !== state?.page.url
   controls()
 }
+function scheduleRefresh() { clearTimeout(scheduledRefresh); scheduledRefresh = setTimeout(() => refresh(), 30) }
 async function refresh() {
-  const requestID = ++refreshID
+  const request = ++refreshID
   try {
     const next = await call({ action: "current" })
-    if (requestID !== refreshID) return
-    if (pageURL !== next.page.url) { pageURL = next.page.url; reset(); capturedIdentity = null; lastPageError = null }
-    const changed = JSON.stringify(state?.notes) !== JSON.stringify(next.notes) || JSON.stringify(state?.anchorStates) !== JSON.stringify(next.anchorStates)
-    state = next
-    $("page-title").textContent = state.page.title
-    $("page-url").textContent = state.page.url
-    if (state.anchor && JSON.stringify(state.anchor) !== capturedIdentity && !editing) {
-      capturedIdentity = JSON.stringify(state.anchor); anchor = state.anchor; $("quote").textContent = anchor.quote
-      status("Selected. Write feedback, then Send & continue.")
+    if (request !== refreshID) return
+    if (state?.page.url !== next.page.url) { pendingAction = null; selectedNoteID = null; notice = null }
+    state = next; model = modelFor(next)
+    $("page-title").textContent = next.page.title; $("page-title").title = next.page.title
+    const url = new URL(next.page.url)
+    $("page-url").textContent = url.protocol === "file:" ? decodeURIComponent(url.pathname.split("/").pop()) : `${url.host}${url.pathname === "/" ? "" : url.pathname}`
+    $("page-url").title = next.page.url
+    $("page-error").hidden = !next.error; $("page-error").textContent = next.error || ""
+    $("pick-label").textContent = next.picking ? "Cancel pick (Esc)" : "Pick element"
+    $("pick").setAttribute("aria-pressed", String(!!next.picking)); $("pick-hint").hidden = !!next.picking
+    if (next.captureID && next.captureID !== model.captureID) {
+      model.captureID = next.captureID
+      if (next.anchor && next.draft.consumedCaptures?.[next.tabID] !== next.captureID) {
+        notice = null
+        if (anchorIdentity(next.anchor) !== anchorIdentity(model.value?.anchor)) await requestAction({ type: "select", anchor: next.anchor,
+          capture: { id: next.captureID, tabID: next.tabID } })
+        else model.value.captures = { ...model.value.captures, [next.tabID]: next.captureID }
+      } else if (next.error) status(next.error, true)
     }
-    if (state.error && state.error !== lastPageError) status(state.error, true)
-    lastPageError = state.error
-    $("pick").textContent = state.picking ? "Cancel pick (Esc)" : "Pick an element"
-    $("pick").setAttribute("aria-pressed", String(!!state.picking))
-    $("pick-hint").textContent = state.picking ? "Click one page element. Picking ends after the click, or press Esc to cancel." : "Or select text on the page, write feedback, then send. Use Save note to collect several notes first."
-    if (changed) renderNotes()
-    controls()
-  } catch (error) { if (requestID === refreshID) { state = null; controls(); status(error.message, true) } }
+    render()
+  } catch (error) {
+    if (request !== refreshID) return
+    state = null; $("page-error").hidden = false; $("page-error").textContent = error.message
+    controls(); status(error.message, true)
+  }
 }
-$("comment").addEventListener("input", controls)
-$("comment").addEventListener("keydown", event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !$("save").disabled) { event.preventDefault(); $("save").click() } })
-task("pick", async () => { const result = await call({ action: "pick" }); await refresh(); status(result.picking ? "Click a page element; Esc cancels" : "Selection cancelled") })
-task("cancel", reset)
-async function saveCurrent() {
-  status("Saving note…")
-  const now = new Date().toISOString()
-  const note = { id: editing?.id || crypto.randomUUID(), revision: (editing?.revision || 0) + 1,
-    createdAt: editing?.createdAt || now, updatedAt: now, kind: $("kind").value, comment: $("comment").value.trim(), anchor }
-  await call({ action: "save", url: state.page.url, note, baseRevision: editing?.revision || 0 })
-  reset(); await refresh(); status("Saved locally")
-}
-task("save", saveCurrent)
-function showConnection() {
-  $("paired").textContent = paired ? paired.title : targets.length > 1 ? "Choose where to send feedback" : "No connected session"
-  $("paired").title = paired ? `${paired.title}\n${paired.directory}` : ""
-  $("connection-hint").textContent = paired ? "Sending continues this session. Comments stay private until you send." : "Run /annotate web in the target OpenCode session."
-  controls()
+function showSessionOptions(show = true, focus = true) {
+  $("session-options").hidden = !show; $("change-target").setAttribute("aria-expanded", String(show))
+  if (show && focus) { notice = null; $("panel-body").scrollTop = 0; focusWhenReady("#targets", false) }
 }
 async function refreshConnection() {
   if (connectionBusy) return
   connectionBusy = true
   const revision = connectionRevision
   try {
-  const result = await call({ action: "connection" })
-  if (revision !== connectionRevision) return
-  targets = result.targets; paired = result.target
-  $("targets").replaceChildren(make("option", "Select a session…")); $("targets").firstChild.value = ""
-  for (const target of targets) { const option = make("option", `${target.title} — ${target.directory}`); option.value = target.id; $("targets").append(option) }
-  if (paired) $("targets").value = paired.id
-  if (!paired && targets.length) { $("session-options").hidden = false; $("change-target").setAttribute("aria-expanded", "true") }
-  showConnection()
-  if (result.stale) $("connection-hint").textContent = "Previous session disconnected. Choose a session explicitly to switch."
+    const result = await call({ action: "connection" })
+    if (revision !== connectionRevision) return
+    if (available?.id !== result.target?.id || destination?.id !== result.destination?.id) notice = null
+    targets = result.targets; available = result.target; destination = result.destination; connectionError = result.error || ""
+    const optionsKey = JSON.stringify([targets.map(target => [target.id, target.title, target.directory]), destination?.id, !!available])
+    if (optionsKey !== connectionOptionsKey) {
+      connectionOptionsKey = optionsKey
+      $("targets").replaceChildren(make("option", "Choose a session…")); $("targets").firstChild.value = ""
+      if (destination && !targets.some(target => target.id === destination.id)) {
+        const option = make("option", `${destination.title} — disconnected`); option.value = destination.id; option.disabled = true; $("targets").append(option)
+      }
+      for (const target of targets) { const option = make("option", `${target.title} — ${target.directory}`); option.value = target.id; $("targets").append(option) }
+      $("targets").value = destination?.id || ""
+    }
+    $("connection-hint").textContent = connectionError ? `Session unavailable: ${connectionError}` : !available && destination ? "Reconnect the original OpenCode session, then refresh. Choose another session only to change the destination." : targets.length > 1 && !destination ? "Choose the session that should receive this review." : !available ? "Run /annotate-web in OpenCode, then refresh." : "Sending continues the selected session."
+    if (!destination && targets.length > 1) showSessionOptions(true, false)
   } catch (error) {
-    if (revision === connectionRevision) { paired = null; showConnection(); $("connection-hint").textContent = `Session unavailable: ${error.message}` }
-  } finally { connectionBusy = false; controls() }
+    available = null; connectionError = error.message; $("connection-hint").textContent = `Session unavailable: ${error.message}`
+  } finally { connectionBusy = false; connectionLoading = false; controls() }
 }
-task("refresh-targets", refreshConnection)
-task("change-target", async () => {
-  const hidden = !$("session-options").hidden
-  $("session-options").hidden = hidden; $("change-target").setAttribute("aria-expanded", String(!hidden))
-  if (!hidden) await refreshConnection()
+function review() { return validateReview({ version: 1, page: state.page, annotations: state.notes }) }
+
+$("comment").addEventListener("input", () => {
+  model.value.comment = $("comment").value; notice = null
+  persistDraft(model).catch(() => {}); controls()
 })
-$("targets").addEventListener("change", async () => {
+$("comment").addEventListener("keydown", event => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !$("save").disabled) { event.preventDefault(); $("save").click() }
+})
+for (const button of $("kind").querySelectorAll("button")) {
+  button.addEventListener("click", () => { model.value.kind = button.dataset.kind; persistDraft(model).catch(() => {}); renderComposer(); controls(); button.focus() })
+  button.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return
+    event.preventDefault(); $(model.value.kind === "comment" ? "kind-ask" : "kind-comment").click()
+  })
+}
+$("save-shortcut").textContent = navigator.platform.includes("Mac") ? "⌘↵" : "Ctrl↵"
+task("pick", async () => { notice = null; await call({ action: "pick" }); await refresh() })
+task("save", async () => { await saveCurrent(); focusWhenReady("#pick") })
+task("cancel", async () => { await discardDraft(); focusWhenReady("#pick") })
+task("save-switch", async () => { const action = pendingAction; await saveCurrent(); await performAction(action) })
+task("discard-switch", async () => { const action = pendingAction; await discardDraft(); await performAction(action) })
+task("keep-editing", () => { pendingAction = null; renderComposer(); focusWhenReady("#comment") })
+task("retry-draft", async () => { await persistDraft(model); status("Draft saved locally"); focusWhenReady("#comment") })
+task("reload-draft", async () => {
+  const conflict = model.conflict
+  if (conflict.code === "draft-conflict") { model.record = conflict.draft; model.value = clone(conflict.draft.value); model.touched = false; model.error = null; model.conflict = null }
+  else {
+    const note = conflict.note
+    model.error = null; model.conflict = null
+    if (!note || note.deleted) await discardDraft()
+    else openComposer({ anchor: note.anchor, kind: note.kind, comment: note.comment, editing: note })
+  }
+  pendingAction = null; notice = null; render(); focusWhenReady(model.value ? "#comment" : "#pick")
+})
+task("keep-draft", async () => {
+  const conflict = model.conflict
+  if (conflict.code === "draft-conflict") model.record = conflict.draft
+  else model.value.editing = conflict.note?.deleted ? null : conflict.note
+  model.error = null; model.conflict = null
+  await persistDraft(model); status("Your draft is saved locally"); focusWhenReady("#comment")
+})
+task("copy-draft", async () => {
+  try { await navigator.clipboard.writeText(model.value.comment); status("Draft copied") }
+  catch { $("comment").focus(); $("comment").select(); status("Automatic copy was blocked. Press Cmd/Ctrl+C to copy your draft.", true) }
+})
+task("undo", async () => {
+  const { note, url } = undoRecord
+  await call({ action: "restore", url, note, baseRevision: note.revision }); undoRecord = null
+  await refresh(); status("Note restored"); focusWhenReady(`[data-note-id="${CSS.escape(note.id)}"] .note-target`)
+})
+task("more", () => { const show = $("utilities").hidden; $("utilities").hidden = !show; $("more").setAttribute("aria-expanded", String(show)); if (show) $("panel-body").scrollTop = 0 })
+task("refresh-targets", refreshConnection)
+task("change-target", async () => { showSessionOptions($("session-options").hidden); if (!$("session-options").hidden) await refreshConnection() })
+$("targets").addEventListener("change", () => run("targets", async () => {
   const target = targets.find(target => target.id === $("targets").value)
   if (!target) return
   connectionRevision++
-  try {
-    paired = (await call({ action: "pair", target })).target
-    $("session-options").hidden = true; $("change-target").setAttribute("aria-expanded", "false"); showConnection()
-  } catch (error) { status(error.message, true) }
-})
+  destination = (await call({ action: "pair", target })).target; available = destination; connectionError = ""; notice = null
+  showSessionOptions(false); renderDelivery(); focusWhenReady("#change-target", false)
+}))
 task("send", async () => {
-  const destination = paired
-  if (!destination) throw new Error("Choose an OpenCode session before sending")
+  if (!available) { showSessionOptions(); await refreshConnection(); return }
+  if (state.outbox && state.outbox.targetID !== destination.id) { showSessionOptions(); status("Choose the original session to retry this batch, or export your notes.", true); return }
+  const target = destination, page = state.page
+  if (!state.outbox) {
+    if (model.error || model.conflict) throw model.conflict || model.error
+    if (validDraft()) await saveCurrent()
+  }
   status("Sending feedback…")
-  if (anchor && $("comment").value.trim()) await saveCurrent()
-  const response = await call({ action: "send", url: state.page.url, targetID: destination.id })
-  await refresh(); $("status").title = response.messageID
-  status("Feedback queued. The agent will continue in the selected session.")
+  const result = await call({ action: "send", url: page.url, targetID: target.id })
+  await refresh(); $("status").title = result.messageID
+  status("Feedback queued. Continue in the selected session.", false, page.url)
+  focusWhenReady(model.value ? "#comment" : "#pick")
 })
 task("copy", async () => {
   const text = markdown(review())
   try { await navigator.clipboard.writeText(text); status("Context copied. Paste it into any agent.") }
   catch {
-    $("preview").textContent = text; document.querySelector("details").open = true
+    $("utilities").hidden = false; $("more").setAttribute("aria-expanded", "true"); $("context-details").open = true
+    $("preview").textContent = text
     const range = document.createRange(); range.selectNodeContents($("preview")); getSelection().removeAllRanges(); getSelection().addRange(range)
+    $("preview").scrollIntoView({ block: "nearest" })
     status("Automatic copy was blocked. The preview is selected; press Cmd/Ctrl+C.", true)
   }
 })
 task("export", () => {
   const url = URL.createObjectURL(new Blob([JSON.stringify(review(), null, 2)], { type: "application/json" }))
-  const a = make("a"); a.href = url; a.download = "annotate-feedback.json"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+  const link = make("a"); link.href = url; link.download = "annotate-feedback.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   status("Complete review exported")
 })
-chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" || area === "session") refresh(); if (changes.paired) refreshConnection() })
-chrome.tabs.onActivated.addListener(refresh)
-chrome.tabs.onUpdated.addListener((_id, change) => { if (change.status === "complete") refresh() })
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return
+  if (state?.picking) $("pick").click()
+  pendingAction = null; $("utilities").hidden = true; $("more").setAttribute("aria-expanded", "false"); showSessionOptions(false); renderComposer()
+})
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" || area === "session") {
+    const ownDraftsOnly = Object.entries(changes).every(([key, value]) => key.startsWith("draft:") && value.newValue?.writerID === writerID)
+    if (!ownDraftsOnly) scheduleRefresh()
+  }
+  if (changes.paired) refreshConnection()
+})
+chrome.tabs.onActivated.addListener(scheduleRefresh)
+chrome.tabs.onUpdated.addListener((_id, change) => { if (change.status === "complete") scheduleRefresh() })
 setInterval(() => { if (document.visibilityState === "visible") refresh() }, 1500)
-setInterval(() => { if (!paired && document.visibilityState === "visible") refreshConnection() }, 10000)
+setInterval(() => { if (document.visibilityState === "visible") refreshConnection() }, 10000)
 window.addEventListener("focus", refreshConnection)
 await Promise.all([refreshConnection(), refresh()])

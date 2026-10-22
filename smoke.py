@@ -13,6 +13,10 @@ import time
 PLUGIN = Path(__file__).resolve().parent
 ENTRYPOINT = Path(os.environ.get("ANNOTATE_TUI_ENTRY", str(PLUGIN / "tui.ts"))).resolve().as_uri()
 BINARY_OPTIONS = {"binary": os.environ["ANNOTATE_TUI_BINARY"]} if os.environ.get("ANNOTATE_TUI_BINARY") else {}
+INHERIT_THEME = os.environ.get("ANNOTATE_INHERIT_THEME") == "1"
+THEME_MODE = os.environ.get("ANNOTATE_THEME_MODE", "dark")
+if INHERIT_THEME:
+    BINARY_OPTIONS["inheritTheme"] = True
 EXPECTED_MARGIN = int(os.environ.get("ANNOTATE_EXPECT_MARGIN", "0"))
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
@@ -58,11 +62,36 @@ def keys(*items):
     tmux("send-keys", "-t", "check:0.0", *items)
 
 
-def open_review(label, command="/annotate-last", filename="last-reply.md"):
+def check_colors(label, roles):
+    ansi = tmux("capture-pane", "-p", "-e", "-t", "check:0.0")
+    (root / f"{label}.ansi").write_text(ansi)
+    colors = json.loads((root / "host-colors.json").read_text())
+    for role, prefix in roles:
+        expected = prefix + ";2;" + ";".join(str(value) for value in colors[role])
+        assert expected in ansi, f"Missing host {role} {expected}: {root / (label + '.ansi')}"
+
+
+def submit(command, label):
     # The trailing space leaves slash completion and submits the optional argument slot.
-    literal(command + " ")
+    # After a review returns, the prompt can drop keys until it is focused again.
+    for _ in range(3):
+        literal(command + " ")
+        try:
+            wait("┃  " + command, f"{label}-typed", 3)
+            break
+        except AssertionError:
+            keys("C-u")
     keys("Enter")
+
+
+def open_review(label, command="/annotate-last", filename="last-reply.md"):
+    submit(command, label)
     output = wait(filename + " · 0 annotations", label)
+    if INHERIT_THEME:
+        roles = [("background", "48"), ("foreground", "38"), ("heading", "38")]
+        if filename == "last-reply.md" and "bold label" in output:
+            roles += [("strong", "38"), ("listItem", "38"), ("linkText", "38")]
+        check_colors(label, roles)
     if EXPECTED_MARGIN:
         for row in output.splitlines():
             cells = row.ljust(140)
@@ -86,19 +115,41 @@ try:
     (fixture / "package.json").write_text(json.dumps({
         "name": "annotate-last-smoke", "type": "module", "exports": {"./tui": "./tui.ts"},
     }))
+    ready = root / "plugin-ready"
     (fixture / "tui.ts").write_text(f'''import plugin from {json.dumps(ENTRYPOINT)}
+import {{ writeFileSync }} from "node:fs"
 export default {{
   ...plugin,
   id: "test.annotate-last",
   setup(ctx) {{
+    const rgb = color => [color.r, color.g, color.b].map(value => Math.round(value * 255))
+    writeFileSync({json.dumps(str(root / "host-colors.json"))}, JSON.stringify({{
+      background: rgb(ctx.theme.background.base), foreground: rgb(ctx.theme.text.base),
+      heading: rgb(ctx.theme.markdown.heading), strong: rgb(ctx.theme.markdown.strong),
+      listItem: rgb(ctx.theme.markdown.listItem), linkText: rgb(ctx.theme.markdown.linkText),
+      selection: rgb(ctx.theme.background.action.primary.focused),
+      selectionForeground: rgb(ctx.themeMode === "light" ? ctx.theme.text.base : ctx.theme.text.action.primary.focused),
+    }}))
     return plugin.setup({{
       ...ctx,
+      keymap: {{ ...ctx.keymap, layer(factory) {{
+        return ctx.keymap.layer(() => {{
+          const layer = factory()
+          writeFileSync({json.dumps(str(ready))}, "ready")
+          return layer
+        }})
+      }} }},
       client: {{ ...ctx.client,
         message: {{ async list() {{ return {{ data: [{{
           id: "msg_smoke_fixture", type: "assistant", agent: "build",
           model: {{ providerID: "fixture", id: "fixture" }},
-          time: {{ created: 1, completed: 2 }}, finish: "stop",
-          content: [{{ type: "text", text: "# Terminal review fixture\\n\\nAlpha paragraph.\\n" }}],
+          time: {{ created: 2, completed: 3 }}, finish: "stop",
+          content: [{{ type: "text", text: "# Terminal review fixture\\n\\nAlpha paragraph with **bold label**.\\n\\n- bullet item\\n\\n1. numbered [item](https://example.com)\\n" }}],
+        }}, {{
+          id: "msg_smoke_progress", type: "assistant", agent: "build",
+          model: {{ providerID: "fixture", id: "fixture" }},
+          time: {{ created: 1, completed: 2 }}, finish: "tool-calls",
+          content: [{{ type: "text", text: "# Progress update fixture\\n\\nAlpha paragraph.\\n" }}],
         }}, {{
           id: "msg_smoke_older", type: "assistant", agent: "build",
           model: {{ providerID: "fixture", id: "fixture" }},
@@ -117,15 +168,28 @@ export default {{
     })["data"]["id"]
     inline = json.dumps({
         "plugins": [{"package": str(fixture), "options": BINARY_OPTIONS}], "animations": False,
-        "theme": {"name": "dracula", "mode": "dark"},
+        "theme": {"name": "dracula", "mode": THEME_MODE},
         "debug": {"devtools": False}, "tabs": {"mode": "off"},
     })
     command = shlex.join(["env", f"OPENCODE_CLI_CONFIG_CONTENT={inline}",
                           "opencode", "--session", session, str(root)])
     tmux("new-session", "-d", "-s", "check", "-x", "140", "-y", "42", "-c", str(root), command)
     wait("Annotate-last isolated smoke test", "host-ready", 60)
+    # The session title can render before the plugin's mounted keymap exists.
+    deadline = time.monotonic() + 60
+    while not ready.exists():
+        if time.monotonic() >= deadline:
+            (root / "plugin-ready-failed.txt").write_text(screen())
+            raise AssertionError("The isolated plugin keymap did not mount")
+        time.sleep(0.05)
 
     open_review("review-open")
+    if INHERIT_THEME:
+        keys("v", "Right", "Enter")
+        wait("selected", "selection")
+        check_colors("selection", [("selection", "48"), ("selectionForeground", "38")])
+        keys("Escape")
+        wait("block 1/4", "selection-cleared")
     annotate("SMOKE exact-session feedback", "note-created")
     keys("q")
     wait("Send annotations?", "confirmation")
@@ -173,20 +237,24 @@ export default {{
     wait("No annotations", "last-fixed-return")
     assert api("get", f"/api/session/{session}/inbox") == document_inbox
 
-    open_review("previous-open", "/annotate 2")
-    wait("Previous reply fixture", "previous-content")
-    annotate("SMOKE previous reply feedback", "previous-note")
-    keys("q")
-    wait("Send annotations?", "previous-confirmation")
+    # Mid-turn progress updates are reachable through the picker.
+    submit("/annotate-pick", "pick")
+    wait("Progress update fixture", "pick-dialog")
+    keys("Down")
     keys("Enter")
-    wait("Sent 1 annotation", "previous-sent")
-    previous_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
-    assert "msg_smoke_older" in previous_inbox
-    assert "SMOKE previous reply feedback" in previous_inbox
+    wait("progress-update.md · 0 annotations", "pick-open")
+    wait("Progress update fixture", "pick-content")
+    annotate("SMOKE progress feedback", "pick-note")
+    keys("q")
+    wait("Send annotations?", "pick-confirmation")
+    keys("Enter")
+    wait("Sent 1 annotation", "pick-sent")
+    pick_inbox = api("get", f"/api/session/{session}/inbox")
+    encoded = json.dumps(pick_inbox)
+    assert "msg_smoke_progress" in encoded and "SMOKE progress feedback" in encoded, encoded
 
     # Browser review opens a local receiver without a model call or visible browser.
-    literal("/annotate web ")
-    keys("Enter")
+    submit("/annotate-web", "web")
     wait("Ready for browser pairing", "web-pairing")
     registry = Path.home() / ".local/share/opencode-annotate/targets"
     target = next(json.loads(p.read_text()) for p in registry.glob("*.json")
@@ -218,7 +286,8 @@ export default {{
     print(json.dumps({"passed": ["real TUI launch", "create annotation", "terminal restore",
                                   "confirmed API delivery", "empty review", "cancelled review",
                                   "document path arguments", "document API delivery", "last fixed to latest",
-                                   "numbered reply API delivery", "browser pairing", "browser API delivery", "retry deduplication"],
+                                   "picker with progress updates", "browser pairing", "browser API delivery", "retry deduplication"],
+                      "theme": THEME_MODE, "inheritedColors": INHERIT_THEME,
                       "evidence": str(root)}, ensure_ascii=False))
 finally:
     tmux("kill-server", check=False)

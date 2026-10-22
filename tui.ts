@@ -13,8 +13,8 @@ export default Plugin.define({
           mode: "global",
           commands: [{
             id: "opencode-annotate.annotate",
-            title: "Annotate reply, document, or webpage",
-            description: "Text defaults to TUI; explicit HTML, URL or web pairs browser review",
+            title: "Annotate reply or document",
+            description: "The latest completed reply, or a Markdown/text file path",
             group: "Annotate",
             palette: true,
             slash: { name: "annotate", arguments: true },
@@ -29,6 +29,30 @@ export default Plugin.define({
             // Any supplied argument is deliberately ignored: this always means latest.
             slash: { name: "annotate-last", arguments: true },
             run: () => review.run(),
+          }, {
+            id: "opencode-annotate.annotate-pick",
+            title: "Annotate earlier text (TUI)",
+            description: "Choose a recent reply or progress update to annotate",
+            group: "Annotate",
+            palette: true,
+            slash: { name: "annotate-pick", arguments: true },
+            run: () => review.pick(),
+          }, {
+            id: "opencode-annotate.annotate-selection",
+            title: "Annotate selected text (TUI)",
+            description: "Open the message containing your last selection in this session",
+            group: "Annotate",
+            palette: true,
+            slash: { name: "annotate-selection", arguments: true },
+            run: () => review.selection(),
+          }, {
+            id: "opencode-annotate.annotate-web",
+            title: "Annotate webpage (browser)",
+            description: "Pair Chrome with this session, open a URL or HTML file, or off",
+            group: "Annotate",
+            palette: true,
+            slash: { name: "annotate-web", arguments: true },
+            run: review.web,
           }],
         }))
         return null

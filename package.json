@@ -1,6 +1,6 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, then send the feedback to the originating session.",
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,7 @@
     "./tui": "./tui.ts"
   },
   "scripts": {
-    "test": "node --test review.test.mjs bridge/*.test.mjs",
+    "test": "node --test *.test.mjs bridge/*.test.mjs",
     "test:browser": "node tests/browser.mjs",
     "install:bridge": "node scripts/install-bridge.mjs",
     "install:plugin": "node scripts/install-plugin.mjs",
@@ -19,6 +19,7 @@
   "files": [
     "tui.ts",
     "review.mjs",
+    "theme.mjs",
     "targets.mjs",
     "web-review.mjs",
     "browser",

@@ -6,6 +6,7 @@ import path from "node:path"
 import { promisify } from "node:util"
 import { createWebReview } from "./web-review.mjs"
 import { wantsBrowser } from "./targets.mjs"
+import { prepareTheme } from "./theme.mjs"
 
 const execute = promisify(execFile)
 const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
@@ -53,23 +54,31 @@ export function selectReply(messages) {
   return eligibleReplies(messages)[0]
 }
 
-function eligibleReplies(messages) {
-  const replies = []
+// Completed assistant text, newest first. Mid-turn progress updates (finish "tool-calls")
+// are text the user can read in the transcript, so pick and selection include them.
+function textMessages(messages) {
+  const texts = []
   const newest = [...messages].sort((a, b) =>
     b.time.created - a.time.created || b.id.localeCompare(a.id),
   )
   for (const message of newest) {
     if (message.type !== "assistant" || message.time.completed === undefined || message.error) continue
-    if (["tool-calls", "error", "content-filter"].includes(message.finish)) continue
+    if (["error", "content-filter"].includes(message.finish)) continue
     const text = message.content.filter(part => part.type === "text").map(part => part.text).join("\n\n")
-    if (text.trim()) replies.push({ id: message.id, text })
+    if (text.trim()) {
+      texts.push({ id: message.id, text, progress: message.finish === "tool-calls", created: message.time.created })
+    }
   }
-  return replies
+  return texts
 }
 
-async function latestReply(client, sessionID, signal, position = 1) {
+function eligibleReplies(messages) {
+  return textMessages(messages).filter(message => !message.progress).map(({ id, text }) => ({ id, text }))
+}
+
+// Walk the session-scoped history newest first; the UI cache holds only a recent page.
+async function* history(client, sessionID, signal) {
   const seen = new Set()
-  const messages = new Set()
   let cursor
   do {
     signal.throwIfAborted()
@@ -77,15 +86,37 @@ async function latestReply(client, sessionID, signal, position = 1) {
       sessionID, type: "assistant", limit: 50,
       ...(cursor ? { cursor } : { order: "desc" }),
     }, { signal })
-    for (const reply of eligibleReplies(page.data)) {
-      if (messages.has(reply.id)) continue
-      messages.add(reply.id)
-      if (--position === 0) return reply
-    }
+    yield page.data
     cursor = page.cursor?.next
     if (cursor && seen.has(cursor)) throw new Error("Session history returned a repeated page cursor.")
     seen.add(cursor)
   } while (cursor)
+}
+
+async function latestReply(client, sessionID, signal) {
+  for await (const page of history(client, sessionID, signal)) {
+    const [reply] = eligibleReplies(page)
+    if (reply) return reply
+  }
+}
+
+async function recentTexts(client, sessionID, signal, limit) {
+  const texts = new Map()
+  for await (const page of history(client, sessionID, signal)) {
+    for (const message of textMessages(page)) {
+      texts.set(message.id, message)
+      if (texts.size >= limit) return [...texts.values()]
+    }
+  }
+  return [...texts.values()]
+}
+
+// Rendered transcript text drops Markdown markers and rewraps lines, so compare letters
+// and digits only.
+const compact = text => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "")
+const preview = (text, length) => {
+  const line = text.replace(/[#*_`>]+/g, "").replace(/\s+/g, " ").trim()
+  return line.length > length ? `${line.slice(0, length - 1)}…` : line
 }
 
 async function archivedNotes(data) {
@@ -122,7 +153,17 @@ export function createReviewCommand(context, options = {}) {
     title: "Annotate", message, variant, duration: variant === "error" ? 15000 : 5000,
   })
 
-  async function run(input = "") {
+  let selection
+  const remember = current => {
+    const text = current?.getSelectedText?.() ?? ""
+    const route = context.ui.router.current()
+    if (text.trim() && route.type === "session") selection = { text, sessionID: route.sessionID }
+  }
+  // OpenCode copies a mouse selection and clears it on release, before any command can
+  // run, so keep the last one per session.
+  context.renderer.on("selection", remember)
+
+  async function start(resolve) {
     if (disposed) return
     if (active) return notice("An annotation is already in progress.")
     // Capture before the first await: changing tabs must never redirect a review.
@@ -135,29 +176,12 @@ export function createReviewCommand(context, options = {}) {
     let directory
     let keepDraft = false
     try {
-      // The UI cache contains only a recent page; a long tool run can push the last
-      // completed reply out of it. Read the session-scoped history, newest first.
-      const target = input.trim()
-      if (wantsBrowser(target)) {
-        await web.run(target, sessionID)
-        return
-      }
-      const numeric = target !== "" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(target)
-      const position = numeric ? Number(target) : 1
-      if (numeric && (!/^\d+$/.test(target) || !Number.isSafeInteger(position) || position < 1)) {
-        throw new Error("Choose a positive integer reply number (1 = latest, 2 = previous).")
-      }
-      const source = target && !numeric
-        ? await documentSource(target, context.client, sessionID, controller.signal)
-        : await latestReply(context.client, sessionID, controller.signal, position)
-      if (controller.signal.aborted) return
-      if (!source) return notice(position === 1
-        ? "This session has no completed assistant reply yet."
-        : `Can't find reply ${position}: this session has fewer completed assistant text replies.`)
+      const source = await resolve({ sessionID, signal: controller.signal })
+      if (controller.signal.aborted || !source) return
 
       directory = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "opencode-annotate-"))
       keepDraft = true
-      const snapshot = source.snapshot ?? "last-reply.md"
+      const snapshot = source.snapshot ?? (source.selection ? "selection.md" : source.progress ? "progress-update.md" : "last-reply.md")
       const file = path.join(directory, snapshot)
       const data = path.join(directory, "data")
       const promptID = `msg_${randomUUID().replaceAll("-", "")}`
@@ -171,7 +195,7 @@ export function createReviewCommand(context, options = {}) {
 
       // Use a fresh store per invocation, and disable any inherited pane delivery.
       // The OpenCode confirmation is the sole authority for sending feedback.
-      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      let env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
         !key.startsWith("HERDR_") && !key.startsWith("PLANNOTATOR_TUI_"),
       ))
       Object.assign(env, {
@@ -179,6 +203,9 @@ export function createReviewCommand(context, options = {}) {
         PLANNOTATOR_FEEDBACK_HISTORY: "0",
         PLANNOTATOR_TUI_THEME: context.themeMode === "light" ? "light" : "dark",
       })
+      if ((options.inheritTheme ?? context.options.inheritTheme) === true) {
+        env = await prepareTheme({ binary, theme: context.theme, directory, env, signal: controller.signal })
+      }
       context.ui.dialog.clear()
       // OpenCode 2.1.1+ suspends and resumes asynchronously; resume forces a full repaint.
       await context.renderer.suspend()
@@ -203,7 +230,9 @@ export function createReviewCommand(context, options = {}) {
       if (!feedback.startsWith("# Annotations on ")) throw new Error("Can't recognize the TUI annotation export format.")
       const subject = source.filePath
         ? `Here are my annotations on the document ${JSON.stringify(source.filePath)}. Please apply the feedback to that file.\nThe annotations are based on a snapshot taken when the document was opened (SHA-256: ${source.sourceHash}). Re-read the file and check the quoted text before editing.`
-        : `Here are my annotations on your reply ${source.id}. Please address the feedback.`
+        : source.selection
+          ? "Here are my annotations on text I selected in this session. Please address the feedback."
+          : `Here are my annotations on your ${source.progress ? "progress update" : "reply"} ${source.id}. Please address the feedback.`
       const text = `${subject}\n\n${feedback}`
       const feedbackPath = path.join(directory, "feedback.md")
       await writeFile(feedbackPath, text, { mode: 0o600 })
@@ -241,9 +270,55 @@ export function createReviewCommand(context, options = {}) {
     }
   }
 
+  const run = (input = "") => start(async ({ sessionID, signal }) => {
+    const target = input.trim()
+    if (/^\d+$/.test(target)) throw new Error("Numbered replies are retired. Use /annotate-pick to choose earlier text.")
+    if (wantsBrowser(target)) throw new Error("Use /annotate-web for webpages and browser pairing.")
+    if (target) return documentSource(target, context.client, sessionID, signal)
+    const reply = await latestReply(context.client, sessionID, signal)
+    if (!reply) notice("This session has no completed assistant reply yet.")
+    return reply
+  })
+
+  const pick = () => start(async ({ sessionID, signal }) => {
+    const texts = await recentTexts(context.client, sessionID, signal, 30)
+    if (!texts.length) {
+      notice("This session has no completed assistant text yet.")
+      return
+    }
+    const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" })
+    const chosen = await context.ui.dialog.select({
+      title: "Annotate text",
+      options: texts.map(text => ({
+        title: preview(text.text, 60), value: text.id,
+        description: `${text.progress ? "Progress update" : "Reply"} · ${time.format(text.created)}`,
+      })),
+    })
+    return texts.find(text => text.id === chosen)
+  })
+
+  const annotateSelection = () => start(async ({ sessionID, signal }) => {
+    const selected = selection?.sessionID === sessionID ? selection.text : ""
+    const needle = compact(selected)
+    if (!needle) {
+      notice("Select text in this session first, then run /annotate-selection.")
+      return
+    }
+    const texts = await recentTexts(context.client, sessionID, signal, 200)
+    return texts.find(text => compact(text.text).includes(needle)) ?? { text: selected, selection: true }
+  })
+
+  const webReview = (input = "") => start(async ({ sessionID }) => {
+    const target = input.trim()
+    if (!(await web.run(target === "" ? "web" : target === "off" ? "web off" : target, sessionID))) {
+      throw new Error("Use a webpage URL, an HTML file, or off.")
+    }
+  })
+
   return {
-    run,
+    run, pick, selection: annotateSelection, web: webReview,
     dispose() {
+      context.renderer.off("selection", remember)
       disposed = true
       active?.abort()
       return web.dispose()

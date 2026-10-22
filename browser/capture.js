@@ -9,9 +9,11 @@
   host.style.cssText = "all:initial!important;position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important"
   const root = host.attachShadow({ mode: "closed" })
   const style = document.createElement("style")
-  style.textContent = '.box{position:fixed;pointer-events:none;border:2px solid #c96442;background:#c9644210}.pin{position:fixed;background:#c96442;color:#fff;border:2px solid #fff;border-radius:50%;font:600 12px system-ui;width:26px;height:26px;pointer-events:none}'
+  style.textContent = '.box{position:fixed;pointer-events:none;border:2px solid #c96442;background:#c9644210}.pin{position:fixed;display:grid;place-items:center;background:#c96442;color:#fff;border:2px solid #fff;border-radius:50%;font:600 12px/1 system-ui;width:26px;height:26px;pointer-events:none}'
   root.append(style); document.documentElement.append(host)
   const box = document.createElement("div"); box.className = "box"
+  const highlight = document.createElement("div"); highlight.className = "box"
+  let highlighted, highlightTimer
   let picking = false, url = location.href, timer, markers = [], active = true
   function send(anchor = null, error = null, modeOnly = false) {
     if (!active) return
@@ -53,6 +55,20 @@
     if (message.action === "pick") { setPicking(!picking); respond({ ok: true, picking }) }
     if (message.action === "markers") { markers = message.notes || []; draw(); respond({ ok: true }) }
     if (message.action === "locate") respond({ states: message.anchors.map(locate) })
+    if (message.action === "reveal") {
+      const state = locate(message.anchor)
+      if (state !== "located") {
+        respond({ ok: false, error: `This element is ${state}. Your feedback is kept.` })
+        return
+      }
+      setPicking(false)
+      highlighted = document.querySelector(message.anchor.selector)
+      highlighted.scrollIntoView({ block: "center", inline: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })
+      root.append(highlight); draw()
+      clearTimeout(highlightTimer)
+      highlightTimer = setTimeout(() => { highlighted = null; highlight.remove() }, 1600)
+      respond({ ok: true })
+    }
   }
   chrome.runtime.onMessage.addListener(onMessage)
   function locate(anchor) {
@@ -68,6 +84,10 @@
     } catch { return "invalid selector" }
   }
   function draw() {
+    if (highlighted?.isConnected) {
+      const rect = highlighted.getBoundingClientRect()
+      highlight.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`
+    } else highlight.remove()
     root.querySelectorAll(".pin").forEach(node => node.remove())
     for (const [index, note] of markers.entries()) {
       let matches
@@ -81,13 +101,13 @@
       pin.style.cssText = `left:${rect.left - 10}px;top:${rect.top - 10}px`; root.append(pin)
     }
   }
-  on(window, "scroll", draw, { passive: true }); on(window, "resize", draw)
+  on(document, "scroll", draw, { capture: true, passive: true }); on(window, "resize", draw)
   const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(draw, 160) })
   observer.observe(document.body, { childList: true, subtree: true, characterData: true })
   const routeTimer = setInterval(() => { if (!active) { observer.disconnect(); return } if (url !== location.href) { url = location.href; markers = []; draw(); send() } }, 700)
   function dispose() {
     if (!active) return
-    active = false; listeners.abort(); clearInterval(routeTimer); clearTimeout(timer); observer.disconnect(); host.remove()
+    active = false; listeners.abort(); clearInterval(routeTimer); clearTimeout(timer); clearTimeout(highlightTimer); observer.disconnect(); host.remove()
     try { chrome.runtime.onMessage.removeListener(onMessage) } catch { /* previous extension context may already be invalidated */ }
     delete globalThis.__opencodeAnnotate
   }

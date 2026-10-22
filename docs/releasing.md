@@ -38,8 +38,8 @@ Push the matching tag afterwards. `publish.yml` verifies the bootstrap archive a
 This was done for 0.5.0 on 2026-10-21 (trust id `8bb95722`).
 
 Keep publishing protected by 2FA and use OIDC for subsequent automated releases.
-No npm token belongs in the workflow or repository. The bootstrap release is not
-evidence that OIDC publication has been exercised; verify that on the next release.
+No npm token belongs in the workflow or repository. OIDC publication with signed
+provenance was first exercised by 0.6.0 on 2026-10-22.
 
 ## Subsequent releases
 

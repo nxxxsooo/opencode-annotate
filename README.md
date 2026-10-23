@@ -180,10 +180,10 @@ delivery path is **q → confirm** and does not need clipboard access.
 
 With the [fork](#match-opencodes-colors-fork-required) (branch `feat/send-intent`),
 **`Ctrl+S`** sends in one step: mid-comment it saves the comment, then returns and
-submits without the OpenCode dialog. `S`, `E` and the header's **Send N to OpenCode**
-button do the same; the clipboard copy and the Review menu (resend, finish, archive) are
-hidden because OpenCode owns delivery. `Ctrl+S` also works while a Chinese input method
-is active, where `q` or `S` would go to the IME.
+submits without the OpenCode dialog. The header's **Send N to OpenCode (ctrl+s)**
+button does the same. It is the only send key: `S` and `E` just point to it, and the
+clipboard copy and Review menu (resend, finish, archive) are hidden because OpenCode
+owns delivery. `Ctrl+S` also works while a Chinese input method is active.
 Upstream binaries ignore the handoff and keep **q → confirm**.
 
 Opening a review makes no model call. Confirming sends a normal user prompt and

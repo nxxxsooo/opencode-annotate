@@ -131,6 +131,8 @@ async function harness(t, options = {}) {
           await writeFile(file, JSON.stringify(record))
         }
       }
+      // What the fork's S / Ctrl+S writes before quitting.
+      if (options.sendIntent) await writeFile(input.env.PLANNOTATOR_TUI_SEND_INTENT, "send\n")
     },
   })
   t.after(command.dispose)
@@ -150,6 +152,15 @@ test("real TUI annotations go only to the captured session even after tab change
   assert.equal(sent.delivery, "queue")
   assert.equal(sent.resume, true)
   assert.equal(h.confirmations(), 1)
+  assert.deepEqual(await readdir(h.root), [])
+})
+
+test("sending from the TUI delivers without a second confirmation", async t => {
+  const h = await harness(t, { sendIntent: true, confirm: false })
+  await h.command.run()
+  assert.equal(h.sent.length, 1)
+  assert.match(h.sent[0].text, /请补充具体例子。/)
+  assert.equal(h.confirmations(), 0)
   assert.deepEqual(await readdir(h.root), [])
 })
 

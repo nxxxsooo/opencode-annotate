@@ -178,6 +178,12 @@ The manifest version alone cannot identify edits to an unpacked extension.
 The upstream **`E`** action copies to the clipboard. This adapter's automatic
 delivery path is **q → confirm** and does not need clipboard access.
 
+With the [fork](#match-opencodes-colors-fork-required) (branch `feat/send-intent`),
+**`Ctrl+S`** sends in one step: mid-comment it saves the comment, then returns and
+submits without the OpenCode dialog. `S` does the same while browsing. `Ctrl+S` also
+works while a Chinese input method is active, where `q` or `S` would go to the IME.
+Upstream binaries ignore the handoff and keep **q → confirm**.
+
 Opening a review makes no model call. Confirming sends a normal user prompt and
 resumes the **original session**, even if the active tab changes. Empty and
 cancelled reviews submit nothing.
@@ -293,6 +299,7 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate-last`：固定批注最新一条完整回复，忽略附带参数。
 - `/annotate-web`：配对 Chrome；`/annotate-web 页面.html`、`/annotate-web https://…` 批注网页；`/annotate-web off` 撤销配对。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 返回 →「Send and continue」。
+- 用 fork 时：写完批注直接按 `Ctrl+S`，一步保存、返回并发送；中文输入法开着也有效。
 - 文档采用独立快照，反馈附原文件路径，确认后发回发起批注的会话。
 - 更新：`opencode plugin update @nxxxsooo/opencode-annotate@latest`，然后重新打开终端客户端。
 

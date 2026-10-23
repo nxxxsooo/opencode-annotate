@@ -17,6 +17,7 @@ INHERIT_THEME = os.environ.get("ANNOTATE_INHERIT_THEME") == "1"
 THEME_MODE = os.environ.get("ANNOTATE_THEME_MODE", "dark")
 if INHERIT_THEME:
     BINARY_OPTIONS["inheritTheme"] = True
+SEND_KEY = os.environ.get("ANNOTATE_SEND_KEY") == "1"
 EXPECTED_MARGIN = int(os.environ.get("ANNOTATE_EXPECT_MARGIN", "0"))
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
@@ -201,6 +202,18 @@ export default {{
     assert "SMOKE exact-session feedback" in encoded, encoded
     assert "msg_smoke_fixture" in encoded, encoded
 
+    if SEND_KEY:
+        # Ctrl+S mid-comment saves it and sends without OpenCode's confirmation.
+        open_review("send-key-open")
+        keys("c")
+        wait("ctrl+s sends", "send-key-compose")
+        literal("SMOKE one-key feedback")
+        keys("C-s")
+        output = wait("Sent 1 annotation", "send-key-sent")
+        assert "Send annotations?" not in output, output
+        inbox = api("get", f"/api/session/{session}/inbox")
+        assert "SMOKE one-key feedback" in json.dumps(inbox, ensure_ascii=False)
+
     open_review("empty-open", "/annotate")
     keys("q")
     wait("No annotations", "empty-return")
@@ -287,7 +300,7 @@ export default {{
                                   "confirmed API delivery", "empty review", "cancelled review",
                                   "document path arguments", "document API delivery", "last fixed to latest",
                                    "picker with progress updates", "browser pairing", "browser API delivery", "retry deduplication"],
-                      "theme": THEME_MODE, "inheritedColors": INHERIT_THEME,
+                      "theme": THEME_MODE, "inheritedColors": INHERIT_THEME, "sendKey": SEND_KEY,
                       "evidence": str(root)}, ensure_ascii=False))
 finally:
     tmux("kill-server", check=False)

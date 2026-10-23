@@ -72,7 +72,8 @@ The smoke test compares captured ANSI colors to the real host's resolved tokens 
 exercises annotation creation, terminal restoration, confirmation and exact-session
 delivery with `resume: false`. No model turn is started. `ANNOTATE_EXPECT_MARGIN` is the
 blank margin expected in the 140-column test pane: `[ui].horizontal_margin` while
-`max_width` exceeds the pane.
+`max_width` exceeds the pane. `ANNOTATE_SEND_KEY=1` adds the fork's one-step `Ctrl+S`
+send (branch `feat/send-intent`) and asserts that no OpenCode confirmation appears.
 
 ## Layout
 

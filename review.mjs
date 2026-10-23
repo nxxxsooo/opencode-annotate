@@ -206,6 +206,9 @@ export function createReviewCommand(context, options = {}) {
       if ((options.inheritTheme ?? context.options.inheritTheme) === true) {
         env = await prepareTheme({ binary, theme: context.theme, directory, env, signal: controller.signal })
       }
+      // A capable binary writes "send" here when S or Ctrl+S quits; upstream ignores it.
+      const intentPath = path.join(directory, "send-intent")
+      env.PLANNOTATOR_TUI_SEND_INTENT = intentPath
       context.ui.dialog.clear()
       // OpenCode 2.1.1+ suspends and resumes asynchronously; resume forces a full repaint.
       await context.renderer.suspend()
@@ -237,7 +240,12 @@ export function createReviewCommand(context, options = {}) {
       const feedbackPath = path.join(directory, "feedback.md")
       await writeFile(feedbackPath, text, { mode: 0o600 })
       const count = (feedback.match(/^## Annotation /gm) ?? []).length
-      const confirmed = await context.ui.dialog.confirm({
+      const intent = await readFile(intentPath, "utf8").catch(error => {
+        if (error.code === "ENOENT") return ""
+        throw error
+      })
+      // Pressing send in the TUI is the explicit confirmation; quitting asks here.
+      const confirmed = intent.trim() === "send" || await context.ui.dialog.confirm({
         title: "Send annotations?",
         message: `${source.filePath ? `Document: ${source.filePath}\n` : ""}Send ${count} ${count === 1 ? "annotation" : "annotations"} to "${title}" and let the assistant continue?`,
         label: { confirm: "Send and continue", cancel: "Cancel" },

@@ -22,7 +22,7 @@ export default Plugin.define({
           }, {
             id: "opencode-annotate.annotate-last",
             title: "Annotate last reply (TUI)",
-            description: "Annotate the latest completed reply; Ctrl+S sends (fork), or q then confirm",
+            description: "Annotate the latest completed reply; q sends (fork), or q then confirm",
             group: "Annotate",
             palette: true,
             // Keep slash submission with a trailing space local to the command.

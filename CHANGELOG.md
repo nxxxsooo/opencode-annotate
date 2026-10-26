@@ -3,8 +3,8 @@
 ## Unreleased
 
 - Pass `PLANNOTATOR_TUI_SEND_INTENT` to the TUI. With the fork's `feat/send-intent`
-  branch, `Ctrl+S` saves, returns and sends in one step without the OpenCode
-  confirmation; `q` still asks. `Ctrl+S` is the only send key and the header shows one
+  branch, `q` with notes returns and sends without the OpenCode confirmation, `Ctrl+S`
+  does the same mid-comment, and `Ctrl+C` returns so OpenCode asks. The header shows one
   Send button; the clipboard copy and Review menu are hidden. Upstream binaries are unaffected.
 
 ## 0.6.0 — annotate any session text

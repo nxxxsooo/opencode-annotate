@@ -179,12 +179,13 @@ The upstream **`E`** action copies to the clipboard. This adapter's automatic
 delivery path is **q → confirm** and does not need clipboard access.
 
 With the [fork](#match-opencodes-colors-fork-required) (branch `feat/send-intent`),
-**`Ctrl+S`** sends in one step: mid-comment it saves the comment, then returns and
-submits without the OpenCode dialog. The header's **Send N to OpenCode (ctrl+s)**
-button does the same. It is the only send key: `S` and `E` just point to it, and the
-clipboard copy and Review menu (resend, finish, archive) are hidden because OpenCode
-owns delivery. `Ctrl+S` also works while a Chinese input method is active.
-Upstream binaries ignore the handoff and keep **q → confirm**.
+**`q`** with notes returns and submits them without the OpenCode dialog. **`Ctrl+S`**
+does the same mid-comment, saving the comment first, and also works while a Chinese
+input method is active. The header's **Send N to OpenCode (q)** button does the same.
+**`Ctrl+C`** returns without sending, and OpenCode asks whether to send. `S` and `E` just
+point to `q`, and the clipboard copy and Review menu (resend, finish, archive) are hidden
+because OpenCode owns delivery. Upstream binaries ignore the handoff and keep
+**q → confirm**.
 
 Opening a review makes no model call. Confirming sends a normal user prompt and
 resumes the **original session**, even if the active tab changes. Empty and
@@ -301,7 +302,7 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate-last`：固定批注最新一条完整回复，忽略附带参数。
 - `/annotate-web`：配对 Chrome；`/annotate-web 页面.html`、`/annotate-web https://…` 批注网页；`/annotate-web off` 撤销配对。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 返回 →「Send and continue」。
-- 用 fork 时：写完批注直接按 `Ctrl+S`，一步保存、返回并发送；中文输入法开着也有效。
+- 用 fork 时：有批注时按 `q` 直接返回并发送；写批注中途按 `Ctrl+S`，一步保存、返回并发送（中文输入法开着也有效）；`Ctrl+C` 不发送，返回后由 OpenCode 询问。
 - 文档采用独立快照，反馈附原文件路径，确认后发回发起批注的会话。
 - 更新：`opencode plugin update @nxxxsooo/opencode-annotate@latest`，然后重新打开终端客户端。
 

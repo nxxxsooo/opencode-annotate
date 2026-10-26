@@ -18,6 +18,8 @@ THEME_MODE = os.environ.get("ANNOTATE_THEME_MODE", "dark")
 if INHERIT_THEME:
     BINARY_OPTIONS["inheritTheme"] = True
 SEND_KEY = os.environ.get("ANNOTATE_SEND_KEY") == "1"
+# With the fork, q sends notes directly; Ctrl+C is the key that leaves them for OpenCode to ask.
+ASK = "C-c" if SEND_KEY else "q"
 EXPECTED_MARGIN = int(os.environ.get("ANNOTATE_EXPECT_MARGIN", "0"))
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
@@ -192,7 +194,7 @@ export default {{
         keys("Escape")
         wait("block 1/4", "selection-cleared")
     annotate("SMOKE exact-session feedback", "note-created")
-    keys("q")
+    keys(ASK)
     wait("Send annotations?", "confirmation")
     keys("Enter")
     wait("Sent 1 annotation", "sent")
@@ -214,6 +216,15 @@ export default {{
         inbox = api("get", f"/api/session/{session}/inbox")
         assert "SMOKE one-key feedback" in json.dumps(inbox, ensure_ascii=False)
 
+        # q with notes returns and sends without OpenCode's confirmation.
+        open_review("q-send-open")
+        annotate("SMOKE q feedback", "q-send-note")
+        keys("q")
+        output = wait("Sent 1 annotation", "q-send-sent")
+        assert "Send annotations?" not in output, output
+        inbox = api("get", f"/api/session/{session}/inbox")
+        assert "SMOKE q feedback" in json.dumps(inbox, ensure_ascii=False)
+
     open_review("empty-open", "/annotate")
     keys("q")
     wait("No annotations", "empty-return")
@@ -222,7 +233,7 @@ export default {{
 
     open_review("cancel-open")
     annotate("SMOKE must not be sent", "cancel-note")
-    keys("q")
+    keys(ASK)
     wait("Send annotations?", "cancel-confirmation")
     keys("Escape")
     wait("Sending cancelled", "cancel-return")
@@ -234,7 +245,7 @@ export default {{
     document.write_text(content)
     open_review("document-open", '/annotate "文档 sample.md"', document.name)
     annotate("SMOKE document feedback", "document-note")
-    keys("q")
+    keys(ASK)
     wait("Document:", "document-confirmation")
     keys("Enter")
     wait("Sent 1 annotation", "document-sent")
@@ -258,7 +269,7 @@ export default {{
     wait("progress-update.md · 0 annotations", "pick-open")
     wait("Progress update fixture", "pick-content")
     annotate("SMOKE progress feedback", "pick-note")
-    keys("q")
+    keys(ASK)
     wait("Send annotations?", "pick-confirmation")
     keys("Enter")
     wait("Sent 1 annotation", "pick-sent")

@@ -206,7 +206,7 @@ export function createReviewCommand(context, options = {}) {
       if ((options.inheritTheme ?? context.options.inheritTheme) === true) {
         env = await prepareTheme({ binary, theme: context.theme, directory, env, signal: controller.signal })
       }
-      // A capable binary writes "send" here when S or Ctrl+S quits; upstream ignores it.
+      // A capable binary writes "send" here when q or Ctrl+S quits with notes; upstream ignores it.
       const intentPath = path.join(directory, "send-intent")
       env.PLANNOTATOR_TUI_SEND_INTENT = intentPath
       context.ui.dialog.clear()

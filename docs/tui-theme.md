@@ -2,9 +2,8 @@
 
 The development option `inheritTheme: true` uses the current OpenCode `context.theme`
 on each invocation. It requires the extended Plannotator fork
-(`nxxxsooo/plannotator-tui`, branch `feat/opencode-theme`, or `feat/layout` for the
-document-width setting), based on the `[colors]` work in upstream PR #105 plus the
-local viewport patch. Upstream Plannotator 0.9.4 does not support it.
+(`nxxxsooo/plannotator-tui`, branch `local/opencode`): upstream's `[colors]` (PR #105)
+plus the document-width, send-handoff and local palette patches. Upstream Plannotator 0.9.4 does not support it.
 
 ```json
 {
@@ -73,12 +72,12 @@ exercises annotation creation, terminal restoration, confirmation and exact-sess
 delivery with `resume: false`. No model turn is started. `ANNOTATE_EXPECT_MARGIN` is the
 blank margin expected in the 140-column test pane: `[ui].horizontal_margin` while
 `max_width` exceeds the pane. `ANNOTATE_SEND_KEY=1` tests the fork's one-step sends
-(branch `feat/send-intent`): `Ctrl+S` and `q` must send without an OpenCode confirmation,
+(branch `local/opencode`): `Ctrl+S` and `q` must send without an OpenCode confirmation,
 and the confirmation paths leave with `Ctrl+C` instead of `q`.
 
 ## Layout
 
 The scoped `annotate.toml` sets `horizontal_margin = 2`, `max_width = 168` and
-`doc_width = 120`. `doc_width` (fork branch `feat/layout`) caps the document's text
+`doc_width = 120`. `doc_width` (fork branch `local/opencode`) caps the document's text
 columns, so wide terminals keep a readable column beside a 42-column comment rail.
 Font family and size stay with the terminal.

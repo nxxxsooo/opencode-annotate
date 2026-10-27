@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — one-key send and browser review rounds
 
-- Pass `PLANNOTATOR_TUI_SEND_INTENT` to the TUI. With the fork's `feat/send-intent`
-  branch, `q` with notes returns and sends without the OpenCode confirmation, `Ctrl+S`
-  does the same mid-comment, and `Ctrl+C` returns so OpenCode asks. The header shows one
-  Send button; the clipboard copy and Review menu are hidden. Upstream binaries are unaffected.
+### Text review
+
+- Pass `PLANNOTATOR_TUI_SEND_INTENT` to the TUI. With the fork's `local/opencode` branch
+  (proposed upstream as plannotator/plannotator-tui#109), `q` with notes returns and sends
+  without the OpenCode confirmation; `Ctrl+S`, `E` and `S` send too, following `[keys]`,
+  and `Ctrl+S` saves an open comment first. `Ctrl+C` returns so OpenCode asks. The header
+  shows one **Send N back (q)** button; the clipboard copy and Review menu are hidden.
+  Upstream binaries are unaffected.
 
 ### Browser review rounds
 

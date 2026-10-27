@@ -74,8 +74,9 @@ Manual configuration, preserving other entries:
 Set `"inheritTheme": true` in the plugin's `options`, alongside `binary`. It requires
 the extended color-capable Plannotator fork
 ([nxxxsooo/plannotator-tui](https://github.com/nxxxsooo/plannotator-tui), branch
-`feat/layout`); upstream 0.9.4 does not support it. The same fork adds `[ui].doc_width`
-to cap the text column on wide terminals. See [TUI theme integration](docs/tui-theme.md).
+`local/opencode`); upstream 0.9.4 does not support it. The same branch adds `[ui].doc_width`
+to cap the text column on wide terminals (proposed upstream in
+[plannotator/plannotator-tui#108](https://github.com/plannotator/plannotator-tui/pull/108)). See [TUI theme integration](docs/tui-theme.md).
 
 Each review uses OpenCode's current resolved colors for the canvas, text, Markdown,
 borders, highlights, cursor and selection. The plugin asks the chosen binary for its
@@ -191,12 +192,13 @@ The manifest version alone cannot identify edits to an unpacked extension.
 The upstream **`E`** action copies to the clipboard. This adapter's automatic
 delivery path is **q → confirm** and does not need clipboard access.
 
-With the [fork](#match-opencodes-colors-fork-required) (branch `feat/send-intent`),
+With the [fork](#match-opencodes-colors-fork-required) (branch `local/opencode`; proposed
+upstream in [plannotator/plannotator-tui#109](https://github.com/plannotator/plannotator-tui/pull/109)),
 **`q`** with notes returns and submits them without the OpenCode dialog. **`Ctrl+S`**
 does the same mid-comment, saving the comment first, and also works while a Chinese
-input method is active. The header's **Send N to OpenCode (q)** button does the same.
-**`Ctrl+C`** returns without sending, and OpenCode asks whether to send. `S` and `E` just
-point to `q`, and the clipboard copy and Review menu (resend, finish, archive) are hidden
+input method is active. The header's **Send N back (q)** button does the same.
+**`Ctrl+C`** returns without sending, and OpenCode asks whether to send. `E` and `S` send as well,
+following any `[keys]` rebinding, and the clipboard copy and Review menu (resend, finish, archive) are hidden
 because OpenCode owns delivery. Upstream binaries ignore the handoff and keep
 **q → confirm**.
 

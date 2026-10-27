@@ -13,6 +13,9 @@ repository owns routing, native messaging and captured-session feedback delivery
   turn; select text elsewhere and check the prompt holds only the command before Enter.
 - Preserve captured-session targeting, terminal restoration, snapshot isolation,
   explicit confirmation and archived-note recovery.
+- Bump `PROTOCOL` in `browser/protocol.mjs` whenever panel ↔ worker actions or response
+  fields change; Chrome can keep an older worker beside a newer panel, and the panel uses
+  the mismatch to offer **Reload Annotate**.
 - Keep npm artifacts limited to the `files` allowlist. Do not commit local settings,
   transcript captures, credentials or machine-specific paths.
 - Releases follow `docs/releasing.md`. Publishing and the maintainer's installed

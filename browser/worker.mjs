@@ -1,12 +1,54 @@
-import { HOST, safeUrl, validateReview } from "./protocol.mjs"
+import { HOST, PROTOCOL, pageTitle, safeUrl, validateReview } from "./protocol.mjs"
 
 const pageKey = async url => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url)))].map(v => v.toString(16).padStart(2, "0")).join("")
 let writes = Promise.resolve()
 const serial = fn => { const next = writes.then(fn); writes = next.catch(() => {}); return next }
+const RECONNECT = "This page reloaded. Click the Annotate icon (Alt+Shift+A) once to reconnect it; your notes are kept."
+const KEPT_ROUNDS = 10
+const inject = tabId => chrome.scripting.executeScript({ target: { tabId }, files: ["inspector.js", "capture.js"] })
 async function activate(tab) {
   if (!tab?.id || !/^(https?|file):/.test(tab.url || "")) throw new Error("Open an ordinary webpage or authorized local HTML")
-  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["inspector.js", "capture.js"] })
-  await chrome.storage.session.set({ [`tab:${tab.id}`]: { page: { url: safeUrl(tab.url), title: tab.title || "Page" }, anchor: null } })
+  await inject(tab.id)
+  await chrome.storage.session.set({ [`tab:${tab.id}`]: { page: { url: safeUrl(tab.url), title: pageTitle(tab.title || "") }, anchor: null } })
+}
+// A reload or navigation removes the page tools; reinject them while activeTab still grants this tab.
+async function tabMessage(tabId, message) {
+  try { return await chrome.tabs.sendMessage(tabId, message) }
+  catch (error) {
+    if (!String(error.message).includes("Receiving end does not exist")) throw error
+    try { await inject(tabId) } catch (injectError) {
+      throw new Error(String(injectError.message).includes("HTML") ? injectError.message : RECONNECT)
+    }
+    return chrome.tabs.sendMessage(tabId, message)
+  }
+}
+const delivered = note => !note.deleted && note.sentRevision === note.revision
+async function closeRound(hash, annotations, details) {
+  const storage = await chrome.storage.local.get(null), sentAt = new Date().toISOString(), updates = {}
+  for (const sent of annotations) {
+    const key = `note:${hash}:${sent.id}`, note = storage[key]
+    if (note && !note.deleted && note.revision === sent.revision) updates[key] = { ...note, sentRevision: sent.revision, sentAt, ...details }
+  }
+  await chrome.storage.local.set(updates)
+  const rounds = new Map()
+  for (const [key, note] of Object.entries({ ...storage, ...updates })) {
+    if (!key.startsWith(`note:${hash}:`) || !delivered(note)) continue
+    const id = note.sentRound || "legacy"
+    if (!rounds.has(id)) rounds.set(id, { at: note.sentAt || "", keys: [] })
+    rounds.get(id).keys.push(key)
+  }
+  const expired = [...rounds.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(KEPT_ROUNDS).flatMap(round => round.keys)
+  if (expired.length) await chrome.storage.local.remove(expired)
+  return Object.keys(updates).length
+}
+function lastRound(entries) {
+  const rounds = new Map()
+  for (const note of entries) {
+    if (!delivered(note) || !note.sentRound) continue
+    const round = rounds.get(note.sentRound) || { id: note.sentRound, count: 0, at: note.sentAt, via: note.sentVia, to: note.sentTo }
+    round.count++; rounds.set(note.sentRound, round)
+  }
+  return [...rounds.values()].sort((a, b) => b.at.localeCompare(a.at))[0] || null
 }
 chrome.action.onClicked.addListener(tab => {
   // open() must retain the browser's action user gesture, before asynchronous injection.
@@ -20,17 +62,19 @@ async function current() {
   if (!state?.page) throw new Error(state?.error || "Click the extension icon on this page to grant access")
   const hash = await pageKey(state.page.url)
   const storage = await chrome.storage.local.get(null)
-  const notes = Object.entries(storage).filter(([key, value]) => key.startsWith(`note:${hash}:`) && !value.deleted).map(([, value]) => value).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
-  let anchorStates = notes.map(() => "unavailable")
-  try { anchorStates = (await chrome.tabs.sendMessage(tab.id, { action: "locate", anchors: notes.map(note => note.anchor) })).states } catch { /* visibly unavailable while navigating */ }
+  const entries = Object.entries(storage).filter(([key]) => key.startsWith(`note:${hash}:`)).map(([, value]) => value)
+  // Delivered notes leave the working list; the latest rounds stay restorable.
+  const notes = entries.filter(note => !note.deleted && !delivered(note)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
   const draft = storage[`draft:${hash}`] || { revision: 0, value: null }
   const outbox = storage[`outbox:${hash}`]
-  let draftAnchorState
-  if (draft.value) {
-    try { draftAnchorState = (await chrome.tabs.sendMessage(tab.id, { action: "locate", anchors: [draft.value.anchor] })).states[0] }
-    catch { draftAnchorState = "unavailable" }
-  }
-  return { tabID: tab.id, ...state, notes, anchorStates, hash, draft, draftAnchorState,
+  let anchorStates = notes.map(() => "unavailable"), draftAnchorState = draft.value ? "unavailable" : undefined, detached = null
+  try {
+    const anchors = notes.map(note => note.anchor).concat(draft.value ? [draft.value.anchor] : [])
+    const { states } = await tabMessage(tab.id, { action: "locate", anchors })
+    anchorStates = states.slice(0, notes.length)
+    if (draft.value) draftAnchorState = states[notes.length]
+  } catch (error) { if (error.message === RECONNECT) detached = RECONNECT /* otherwise visibly unavailable while navigating */ }
+  return { protocol: PROTOCOL, tabID: tab.id, ...state, notes, anchorStates, hash, draft, draftAnchorState, detached, lastRound: lastRound(entries),
     outbox: outbox ? { targetID: outbox.targetID, count: outbox.review.annotations.length } : null }
 }
 function draftConflict(draft) {
@@ -59,7 +103,7 @@ async function handle(message, sender) {
     if (!sender.tab || !sender.url || new URL(message.page.url).origin !== new URL(sender.url).origin) throw new Error("Invalid page source")
     const key = `tab:${sender.tab.id}`
     const previous = (await chrome.storage.session.get(key))[key] || {}
-    await chrome.storage.session.set({ [key]: { ...previous, page: { url: safeUrl(message.page.url), title: String(message.page.title).slice(0, 500) }, picking: !!message.picking,
+    await chrome.storage.session.set({ [key]: { ...previous, page: { url: safeUrl(message.page.url), title: pageTitle(message.page.title) }, picking: !!message.picking,
       ...(!message.modeOnly ? { anchor: message.anchor, error: message.error, captureID: crypto.randomUUID() } : {}) } })
     return {}
   }
@@ -103,11 +147,11 @@ async function handle(message, sender) {
   if (message.action === "unpair") { await chrome.storage.local.remove("paired"); return {} }
   const state = await current()
   if (message.url && message.url !== state.page.url) throw new Error("The active page changed; retry on the original page")
-  if (message.action === "pick") return chrome.tabs.sendMessage(state.tabID, { action: "pick" })
+  if (message.action === "pick") return tabMessage(state.tabID, { action: "pick" })
   if (message.action === "reveal") {
     const note = state.notes.find(note => note.id === message.noteID)
     if (!note) throw new Error("This note is no longer on the page")
-    const result = await chrome.tabs.sendMessage(state.tabID, { action: "reveal", anchor: note.anchor })
+    const result = await tabMessage(state.tabID, { action: "reveal", anchor: note.anchor })
     if (!result.ok) throw new Error(result.error)
     return result
   }
@@ -117,16 +161,10 @@ async function handle(message, sender) {
     if ((old?.revision || 0) !== message.baseRevision) throw Object.assign(new Error("This note changed in another tab. Choose which version to keep."), { code: "note-conflict", note: old || null })
     if (message.action !== "save" && !old) throw new Error("This note no longer exists")
     if (message.action === "restore" && !old.deleted) throw new Error("This note has already been restored")
+    if (old && delivered(old)) throw new Error("This note was already delivered; restore its round first")
     const note = { ...(message.action === "save" ? message.note : old), page: state.page,
       revision: (old?.revision || 0) + 1, deleted: message.action === "delete" }
-    if (message.action === "delete") note.wasSent = old.sentRevision === old.revision
-    else if (message.action === "restore") {
-      if (old.wasSent) note.sentRevision = note.revision
-      delete note.wasSent
-    } else {
-      note.sentRevision = old?.sentRevision
-      delete note.wasSent
-    }
+    if (message.action === "save") note.sentRevision = old?.sentRevision
     validateReview({ version: 1, page: state.page, annotations: [note] })
     if (!old && state.notes.length >= 200) throw new Error("This page has 200 notes; export and remove some first")
     const updates = { [key]: note }
@@ -141,7 +179,26 @@ async function handle(message, sender) {
     }
     await chrome.storage.local.set(updates); return { note, draft }
   })
-  if (message.action === "markers") return chrome.tabs.sendMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.anchor })) })
+  if (message.action === "markers") return tabMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.anchor })) })
+  if (message.action === "copied") return serial(async () => {
+    if (!Array.isArray(message.notes) || !message.notes.length) throw new Error("No copied feedback to record")
+    const count = await closeRound(state.hash, message.notes, { sentRound: crypto.randomUUID(), sentVia: "clipboard", sentTo: null })
+    // Copied feedback supersedes a batch that could not reach its session.
+    await chrome.storage.local.remove(`outbox:${state.hash}`)
+    return { count }
+  })
+  if (message.action === "restore-round") return serial(async () => {
+    const storage = await chrome.storage.local.get(null), updates = {}
+    for (const [key, note] of Object.entries(storage)) {
+      if (!key.startsWith(`note:${state.hash}:`) || !delivered(note) || note.sentRound !== message.roundID) continue
+      const { sentRevision, sentRound, sentAt, sentVia, sentTo, ...rest } = note
+      updates[key] = { ...rest, revision: note.revision + 1 }
+    }
+    if (!Object.keys(updates).length) throw new Error("This round is no longer available")
+    if (state.notes.length + Object.keys(updates).length > 200) throw new Error("This page would exceed 200 notes; send or remove some first")
+    await chrome.storage.local.set(updates)
+    return { count: Object.keys(updates).length }
+  })
   if (message.action === "send") return serial(async () => {
     const latest = await current()
     if (latest.page.url !== state.page.url) throw new Error("The active page changed; return to the original page to send")
@@ -167,13 +224,9 @@ async function handle(message, sender) {
     }
     const response = await chrome.runtime.sendNativeMessage(HOST, batch)
     if (!response.ok) throw new Error(response.error)
-    for (const sent of batch.review.annotations) {
-      const key = `note:${state.hash}:${sent.id}`
-      const note = (await chrome.storage.local.get(key))[key]
-      if (note && note.revision === sent.revision) await chrome.storage.local.set({ [key]: { ...note, sentRevision: sent.revision } })
-    }
+    const count = await closeRound(state.hash, batch.review.annotations, { sentRound: batch.batchID, sentVia: "session", sentTo: paired.title })
     await chrome.storage.local.remove(outboxKey)
-    return response
+    return { ...response, count }
   })
   throw new Error("Unknown annotation action")
 }

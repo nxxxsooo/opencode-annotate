@@ -140,6 +140,16 @@ After implementation acceptance, follow `docs/releasing.md` and the project's de
 
 The everyday Chrome profile, native side-panel-shell presentation, and a screen-reader session were not part of the implementation verification above. The 2026-10-22 live-profile reload separately verified worker-source parity and saved-data integrity, not those interaction or accessibility scenarios. No version bump or publication was performed.
 
+## Superseded by review rounds — 2026-10-23
+
+Accepted by the user in the everyday Chrome profile (“works”) after three fixes. Criterion 10 and the pending/sent queue above no longer describe current behavior:
+
+- Delivery closes a round: delivered notes leave the working list, keep their `sentRound`/`sentAt`/`sentVia`, and stay restorable through **Restore last round** (ten rounds per page). Editing a delivered note now requires restoring its round.
+- Two explicit delivery modes: a **Live** session gets **Send N notes**; otherwise **Copy N notes** copies the round for any agent and closes it. A send that loses its session keeps the notes and switches to Copy.
+- The worker reinjects page tools after a reload while `activeTab` still applies; a `PROTOCOL` mismatch between panel and worker shows **Reload Annotate** instead of raw action errors.
+
+Current behavior lives in the README and CHANGELOG (Unreleased → Browser review rounds); `npm run test:browser` covered 34 scenarios at acceptance. Not yet committed or released at the time of this note.
+
 ## Residual risks
 
 Draft persistence introduces concurrency and storage-failure paths. Existing saved-note/outbox data must remain readable throughout. DOM targets can disappear between capture and reveal; present that state explicitly. The preview cannot validate native messaging, extension CSP, or the real side-panel shell, so those require the production browser harness.

@@ -21,7 +21,7 @@ decodeStream(process.stdin, async message => {
       response = { ok: true, targets: live.filter(Boolean) }
     } else {
       const target = targets.find(target => target.id === message.targetID)
-      if (!target) throw new Error("Paired session is offline; run /annotate web and pair again")
+      if (!target) throw new Error("Paired session is offline; run /annotate-web in it to reconnect")
       response = await request(target.socket, message)
     }
   } catch (error) { response = { ok: false, error: error.message } }

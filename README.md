@@ -110,9 +110,24 @@ Switching terminal tabs never changes the paired target. Revoke with `/annotate-
 
 The numbered queue matches the page markers. Click a note's quoted target to show it
 on the page without activating the element; **Edit** changes the feedback, and **Undo**
-restores a deleted note. The delivery bar shows the pending count, destination, and sent
-state. **More review options** contains Markdown copy, JSON export, and a preview of
-all saved notes.
+restores a deleted note. The delivery bar shows the round's note count and destination.
+
+Each send closes a review round: delivered notes leave the list and the panel is ready
+for the next round. **Restore last round** returns the most recent delivered notes to the
+list; the last ten rounds per page are kept.
+
+Delivery has two modes, shown beside the destination. With a **Live** session the primary
+button is **Send N notes**, and the copy icon beside it copies the round instead. When the
+session is **Offline**, or none is connected, the button is **Copy N notes**: it copies the
+round as Markdown for any agent and closes it the same way. Run `/annotate-web` in a
+session to switch back to Send. If a session drops during Send, the notes are kept and the
+panel switches to Copy.
+**More review options** contains a non-closing Markdown copy, JSON export, and a preview
+of the current round.
+
+After a page reload or same-site navigation, the panel reconnects its page tools
+automatically. If Chrome has withdrawn access (for example after moving to another site),
+the panel asks you to click the extension icon once; saved notes are kept.
 
 ### Explicit routing
 
@@ -137,8 +152,8 @@ Native delivery requires an open, paired local TUI. If the receiver closes, feed
 pending. A failed batch retains its original target and ID for safe retry; if that target
 is permanently gone, export the notes before starting a new review. **Retry N notes &
 continue** retries that original batch; newly composed feedback stays local for the next
-send. Changed sent notes become new pending revisions; unchanged edits send nothing new.
-Clipboard failures expose a selectable preview. Browser-internal pages, PDF,
+send. Copying a round instead supersedes a failed batch.
+Clipboard failures expose a selectable preview and keep the round open. Browser-internal pages, PDF,
 cross-origin iframes, Canvas and remote SSH TUI clients are outside this version's scope.
 Page Context is retired only after exporting its drafts and verifying this replacement.
 
@@ -155,10 +170,8 @@ After updating the unpacked `browser/` files, open `chrome://extensions` and cli
 using its extension icon or **Alt+Shift+A**.
 
 A newly opened sidebar can load the updated `panel.mjs` while Chrome still runs an
-older `worker.mjs`. With the compact workspace, that mismatch produces
-`Cannot read properties of undefined (reading 'value')`: the sidebar expects a
-`draft` record that the older worker does not return. Reload the whole extension;
-reopening only the sidebar does not ensure the background code is refreshed.
+older `worker.mjs`. The panel detects this protocol mismatch and shows **Annotate was
+updated** with a **Reload Annotate** button; reopen the panel afterwards.
 Saved extension-local data survives an extension reload.
 
 For diagnosis, compare the running worker's source (DevTools/CDP

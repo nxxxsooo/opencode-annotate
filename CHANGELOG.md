@@ -7,6 +7,26 @@
   does the same mid-comment, and `Ctrl+C` returns so OpenCode asks. The header shows one
   Send button; the clipboard copy and Review menu are hidden. Upstream binaries are unaffected.
 
+### Browser review rounds
+
+- Sending closes a review round: delivered notes leave the list, page markers renumber,
+  and the panel is ready for the next round. **Restore last round** brings the latest
+  delivered notes back; the last ten rounds per page are kept.
+- Without a live session, the primary action is **Copy N notes & continue**; a copy icon
+  beside Send offers the same when connected. Copying closes the round and supersedes a
+  failed batch; a blocked clipboard keeps the round open.
+- Copy writes the clipboard within the click, before saving an open draft, and falls back
+  to the new `clipboardWrite` permission, so Chrome no longer refuses it on slow pages.
+- Separate the two delivery modes: a **Live**/**Offline** marker beside the destination,
+  **Send N notes** only with a live session, **Copy N notes** otherwise. A session that
+  drops during Send keeps the notes and switches to Copy instead of showing an error.
+- Detect a stale background worker after an update and offer **Reload Annotate**
+  instead of `Unknown annotation action`.
+- Strip invisible format characters from page titles, such as Feishu's title watermark.
+- Reconnect page tools automatically after a reload or same-site navigation, fixing
+  `Could not establish connection. Receiving end does not exist.` on Pick, Show on page
+  and markers. When Chrome has withdrawn access, the panel asks for one icon click.
+
 ## 0.6.0 — annotate any session text
 
 ### Text review

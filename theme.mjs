@@ -96,10 +96,10 @@ export async function prepareTheme({ binary, theme, directory, env, signal }) {
     cwd: directory, env: environment, signal, timeout: 15000, maxBuffer: 1024 * 1024,
   })
   const { stdout } = await config(env)
-  // The fork's `config` command serializes its strict schema with [colors] last.
+  // The reviewer's `config` command serializes its strict schema with [colors] last.
   // Work on that normalized output, never try to parse or rewrite the user's TOML.
   const marker = stdout.lastIndexOf("\n[colors]\n")
-  if (marker < 0) throw new Error("OpenCode colors require the color-capable Plannotator fork. Check the plugin's binary option.")
+  if (marker < 0) throw new Error("Annotate TUI did not return its color configuration. Check the plugin's binary option.")
   const filename = path.join(directory, "theme.toml")
   const palette = Object.entries(colors).map(([role, value]) => `${role} = "${value}"`).join("\n")
   await writeFile(filename, `${stdout.slice(0, marker)}\n\n[colors]\n${palette}\n`, { mode: 0o600 })
@@ -108,7 +108,7 @@ export async function prepareTheme({ binary, theme, directory, env, signal }) {
   // Also catches launchers that overwrite PLANNOTATOR_TUI_CONFIG instead of honoring it.
   for (const [role, value] of Object.entries(colors)) {
     if (!new RegExp(`^${role} = "${value}"$`, "mi").test(effective.stdout)) {
-      throw new Error(`Plannotator did not apply ${role}. Its launcher must honor PLANNOTATOR_TUI_CONFIG.`)
+      throw new Error(`Annotate TUI did not apply ${role}. Its launcher must honor PLANNOTATOR_TUI_CONFIG.`)
     }
   }
   return themed

@@ -2,7 +2,6 @@
 import { spawn, execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises"
-import { statSync } from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
@@ -15,17 +14,9 @@ import { listTargets, registryRoot } from "../bridge/receiver.mjs"
 import { browserTarget } from "../targets.mjs"
 import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
+import { resolveTuiBinary } from "../tui/binary.mjs"
 
 const execute = promisify(execFile)
-
-export function resolveAdaptedBinary(customBinary) {
-  if (customBinary) return customBinary
-  const localAnnotate = path.join(os.homedir(), ".local/bin/plannotator-tui-annotate")
-  try {
-    if (statSync(localAnnotate).isFile()) return localAnnotate
-  } catch {}
-  return "plannotator-tui"
-}
 
 export function getAdaptedThemeTokens() {
   const rgba = (r, g, b, a = 1) => ({ r: r / 255, g: g / 255, b: b / 255, a })
@@ -50,12 +41,12 @@ function usage() {
 Commands:
   status               Show active AGY sessions and annotation pairing state
   web [target]         Pair browser companion with current AGY session (or open URL/HTML)
-  tui [path]           Review latest AGY reply or markdown document in Plannotator TUI
+  tui [path]           Review latest AGY reply or markdown document in Annotate TUI
   queue                List pending annotations queued for current AGY session
 
 Options:
   --session <id>       Explicit AGY conversation ID (defaults to cwd-matched active session)
-  --binary <path>      Path to plannotator-tui binary (default: 'plannotator-tui')
+  --binary <path>      Override the bundled Annotate TUI executable
 `)
 }
 
@@ -157,7 +148,7 @@ async function cmdQueue(options) {
 
 async function cmdTui(targetPath, options) {
   const session = await resolveSession(options.session)
-  const binary = resolveAdaptedBinary(options.binary)
+  const binary = resolveTuiBinary(options.binary)
   const brainDir = defaultBrainDir(session.conversationId)
   const calledByAgent = Boolean(process.env.ANTIGRAVITY_AGENT || process.env.AGENT_TOOL_CALL)
   const isInteractiveTTY = Boolean(options.interactiveTty) || (!calledByAgent && Boolean(process.stdin.isTTY) && !options.spawnWindow)
@@ -190,7 +181,7 @@ async function cmdTui(targetPath, options) {
       }
     }
 
-    console.log(`Opened interactive Plannotator TUI window for "${session.title}".`)
+    console.log(`Opened interactive Annotate TUI window for "${session.title}".`)
     console.log("Waiting for user to complete annotations (press 'q' or Ctrl+S to finish)...")
 
     for (let i = 0; i < 300; i++) {
@@ -257,16 +248,7 @@ async function cmdTui(targetPath, options) {
     PLANNOTATOR_TUI_SEND_INTENT: intentPath,
   }
 
-  try {
-    env = await prepareTheme({
-      binary,
-      theme: getAdaptedThemeTokens(),
-      directory: tempDir,
-      env,
-    })
-  } catch {
-    // If binary does not support theme command, fallback to base env
-  }
+  env = await prepareTheme({ binary, theme: getAdaptedThemeTokens(), directory: tempDir, env })
 
   // Browse in ASCII so an input method cannot swallow review keys; see input-source.mjs.
   const inputSource = createInputSource()
@@ -277,7 +259,7 @@ async function cmdTui(targetPath, options) {
   }
 
   try {
-    // Run Plannotator interactively
+    // Run the bundled reviewer interactively.
     const child = spawn(binary, [snapshotFile], {
       cwd: tempDir,
       env,

@@ -1,0 +1,275 @@
+//! Where rendered feedback goes when the user sends it (decision 11).
+//!
+//! The app renders feedback with one function regardless of target; only the target
+//! varies. Clipboard is the standalone default. Inside Herdr the target is an agent's pane
+//! and the transport is `herdr agent prompt`. Nothing else in the app knows which is in use;
+//! it only distinguishes the three outcomes below.
+
+use std::io::Write as _;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+/// Why a send did not land. The app reacts differently to each.
+#[derive(Debug)]
+pub(crate) enum DeliveryError {
+    /// The agent is at a dialog and Herdr refused the prompt; retry later.
+    Blocked(String),
+    /// No agent to send to: pane gone, agent not detected yet, herdr binary missing.
+    Unavailable(String),
+    /// Anything else, with whatever the transport said.
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for DeliveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Blocked(msg) | Self::Unavailable(msg) => f.write_str(msg),
+            Self::Failed(err) => write!(f, "{err:#}"),
+        }
+    }
+}
+
+impl From<std::io::Error> for DeliveryError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Failed(err.into())
+    }
+}
+
+pub(crate) trait Delivery {
+    /// Shown in the footer and on the button, e.g. `clipboard` or `claude in w1:p1`.
+    fn describe(&self) -> String;
+    /// True when the target is an agent that will act on the feedback.
+    fn is_agent(&self) -> bool {
+        false
+    }
+    /// The receiving agent's host label (`claude`, `codex`, ...), when the target is one.
+    fn agent_host(&self) -> Option<&str> {
+        None
+    }
+    fn deliver(&self, feedback: &str) -> Result<(), DeliveryError>;
+}
+
+/// The OSC 52 sequence that hands `text` to the terminal's clipboard.
+///
+/// The terminal the app draws on is the one the person is sitting at, so a copy lands on their
+/// machine even when the app itself runs on a remote server: Herdr 0.9.0 forwards a pane's OSC 52
+/// to the viewing client. Terminals commonly refuse a base64 payload over 74994 bytes; the sequence
+/// is still emitted whole, because truncating a copy silently is worse than one the terminal drops.
+pub(crate) fn osc52_sequence(text: &str) -> String {
+    format!("\x1b]52;c;{}\x07", crate::base64::encode(text.as_bytes()))
+}
+
+/// OSC 52: hand text to the terminal's clipboard so Cmd-V works outside the app.
+#[derive(Debug, Default)]
+pub(crate) struct Clipboard;
+
+impl Delivery for Clipboard {
+    fn describe(&self) -> String {
+        "clipboard".to_owned()
+    }
+
+    fn deliver(&self, feedback: &str) -> Result<(), DeliveryError> {
+        let mut out = std::io::stdout().lock();
+        // Callers write between frames, so the sequence never lands inside one.
+        out.write_all(osc52_sequence(feedback).as_bytes())?;
+        out.flush()?;
+        Ok(())
+    }
+}
+
+/// Headless runs: nothing leaves the process.
+#[derive(Debug, Default)]
+pub(crate) struct Discard;
+
+impl Delivery for Discard {
+    fn describe(&self) -> String {
+        "nowhere (headless)".to_owned()
+    }
+
+    fn deliver(&self, _feedback: &str) -> Result<(), DeliveryError> {
+        Ok(())
+    }
+}
+
+/// An agent running in a Herdr pane. `herdr agent prompt` pastes the feedback as the
+/// agent's next message and presses Enter.
+#[derive(Debug)]
+pub(crate) struct HerdrAgent {
+    bin: PathBuf,
+    pane: String,
+    agent: Option<String>,
+}
+
+impl HerdrAgent {
+    pub(crate) fn new(bin: PathBuf, pane: String, agent: Option<String>) -> Self {
+        Self { bin, pane, agent }
+    }
+}
+
+impl Delivery for HerdrAgent {
+    fn agent_host(&self) -> Option<&str> {
+        self.agent.as_deref()
+    }
+
+    fn describe(&self) -> String {
+        match &self.agent {
+            Some(agent) => format!("{agent} in {}", self.pane),
+            None => self.pane.clone(),
+        }
+    }
+
+    fn is_agent(&self) -> bool {
+        true
+    }
+
+    fn deliver(&self, feedback: &str) -> Result<(), DeliveryError> {
+        let output = Command::new(&self.bin)
+            .args(["agent", "prompt", &self.pane, feedback])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| DeliveryError::Unavailable(format!("cannot run {}: {err}", self.bin.display())))?;
+        parse_response(
+            output.status.success(),
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+        )
+    }
+}
+
+/// Map a `herdr agent prompt` exit into an outcome. Herdr prints a JSON envelope
+/// `{"error":{"code","message"}}` on stderr when it refuses.
+pub(crate) fn parse_response(success: bool, _stdout: &str, stderr: &str) -> Result<(), DeliveryError> {
+    if success {
+        return Ok(());
+    }
+    let envelope: Option<serde_json::Value> = serde_json::from_str(stderr.trim()).ok();
+    let error = envelope.as_ref().and_then(|v| v.get("error"));
+    let code = error.and_then(|e| e.get("code")).and_then(serde_json::Value::as_str);
+    let message = error
+        .and_then(|e| e.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| stderr.trim().to_owned(), str::to_owned);
+    match code {
+        Some("agent_blocked") => Err(DeliveryError::Blocked(message)),
+        Some("agent_not_found" | "agent_not_ready" | "pane_not_found" | "empty_agent_prompt") => {
+            Err(DeliveryError::Unavailable(message))
+        }
+        Some(code) => Err(DeliveryError::Failed(anyhow::anyhow!("{code}: {message}"))),
+        None => Err(DeliveryError::Failed(anyhow::anyhow!(
+            "herdr agent prompt failed: {}",
+            if message.is_empty() { "no output".to_owned() } else { message }
+        ))),
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "tests assert by panicking"
+)]
+mod tests {
+    use super::*;
+
+    fn envelope(code: &str, message: &str) -> String {
+        format!(r#"{{"id":"cli:agent:prompt","error":{{"code":"{code}","message":"{message}"}}}}"#)
+    }
+
+    #[test]
+    fn the_clipboard_sequence_is_osc52_over_the_raw_utf8_bytes() {
+        assert_eq!(osc52_sequence("hi"), "\x1b]52;c;aGk=\x07");
+        assert_eq!(
+            osc52_sequence("hi").as_bytes(),
+            &[0x1b, 0x5d, 0x35, 0x32, 0x3b, 0x63, 0x3b, 0x61, 0x47, 0x6b, 0x3d, 0x07]
+        );
+        assert_eq!(osc52_sequence(""), "\x1b]52;c;\x07");
+        assert_eq!(osc52_sequence("한글 · é"), "\x1b]52;c;7ZWc6riAIMK3IMOp\x07");
+    }
+
+    #[test]
+    fn an_oversized_copy_is_emitted_whole_rather_than_truncated() {
+        // 74994 base64 bytes is the payload many terminals stop at; we never cut a copy to fit.
+        let text = "a".repeat(80_000);
+        let sequence = osc52_sequence(&text);
+        assert!(sequence.len() > 74_994);
+        assert!(sequence.starts_with("\x1b]52;c;") && sequence.ends_with('\x07'));
+        assert!(sequence.contains(&crate::base64::encode(text.as_bytes())));
+    }
+
+    #[test]
+    fn headless_runs_never_reach_the_terminal_clipboard() {
+        // `--print`, `--export` and `--snapshot` open the app non-interactively, and a freshly
+        // opened app has not enabled clipboard copies; only the interactive event loop does.
+        assert_eq!(crate::cli::delivery(false).describe(), Discard.describe());
+        let source =
+            plannotator_tui_schema::DocumentSource::file(PathBuf::from("doc.md"), "# hi\n".to_owned());
+        let app = crate::app::App::open(source, 80, crate::cli::delivery(false)).expect("open");
+        assert!(!app.clipboard);
+    }
+
+    #[test]
+    fn success_is_ok_regardless_of_output() {
+        assert!(parse_response(true, r#"{"id":"x","result":{}}"#, "").is_ok());
+    }
+
+    #[test]
+    fn blocked_agent_is_blocked_with_herdrs_message() {
+        let err =
+            parse_response(false, "", &envelope("agent_blocked", "agent w1:p1 is blocked")).unwrap_err();
+        assert!(matches!(&err, DeliveryError::Blocked(m) if m == "agent w1:p1 is blocked"));
+    }
+
+    #[test]
+    fn missing_or_unready_agent_is_unavailable() {
+        for code in ["agent_not_found", "agent_not_ready", "pane_not_found", "empty_agent_prompt"] {
+            let err = parse_response(false, "", &envelope(code, "gone")).unwrap_err();
+            assert!(matches!(err, DeliveryError::Unavailable(_)), "{code}");
+        }
+    }
+
+    #[test]
+    fn unknown_code_and_garbage_are_failures_that_keep_the_text() {
+        let err = parse_response(false, "", &envelope("socket_error", "boom")).unwrap_err();
+        assert!(matches!(&err, DeliveryError::Failed(e) if e.to_string() == "socket_error: boom"));
+        let err = parse_response(false, "", "connection refused\n").unwrap_err();
+        assert!(matches!(&err, DeliveryError::Failed(e) if e.to_string().contains("connection refused")));
+    }
+
+    #[test]
+    fn describe_names_the_agent_when_known() {
+        let bin = PathBuf::from("herdr");
+        assert_eq!(
+            HerdrAgent::new(bin.clone(), "w1:p1".into(), Some("claude".into())).describe(),
+            "claude in w1:p1"
+        );
+        assert_eq!(HerdrAgent::new(bin, "w1:p1".into(), None).describe(), "w1:p1");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_create_process_keeps_feedback_in_one_argument() {
+        let root = std::env::var_os("RUNNER_TEMP")
+            .map_or_else(std::env::temp_dir, PathBuf::from)
+            .join(format!("plannotator delivery proof ü-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp root");
+        let fake = root.join("fake herdr.exe");
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/fake-herdr.rs");
+        let output = Command::new("rustc")
+            .arg("--edition=2024")
+            .arg(source)
+            .arg("-o")
+            .arg(&fake)
+            .output()
+            .expect("run rustc");
+        assert!(output.status.success(), "rustc failed: {}", String::from_utf8_lossy(&output.stderr));
+        let feedback = "line one\n\"quoted\" 100% & ready | café 中文";
+        HerdrAgent::new(fake, "w1:p1".into(), Some("codex".into())).deliver(feedback).expect("delivered");
+        let log = std::fs::read_to_string(root.join("calls.jsonl")).expect("call log");
+        let call: serde_json::Value = serde_json::from_str(log.trim()).expect("JSON call");
+        assert_eq!(call["argv"], serde_json::json!(["agent", "prompt", "w1:p1", feedback]));
+        assert_eq!(call["argv"].as_array().expect("argv").len(), 4);
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+}

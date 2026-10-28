@@ -5,3 +5,5 @@ __pycache__/
 .local/
 .DS_Store
 test-results/
+tui/target/
+tui/bin/

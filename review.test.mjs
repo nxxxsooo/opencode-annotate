@@ -128,7 +128,7 @@ async function harness(t, options = {}) {
       assert.equal(await readFile(input.file, "utf8"), options.expectedText ?? "# Review fixture\n\nAlpha paragraph.\n")
       if (options.failTerminal) throw new Error("Terminal child failed")
       if (!options.empty) {
-        // Use the installed upstream binary, including its real JSON store and export contract.
+        // Exercise the bundled binary's real JSON store and export contract.
         execFileSync(input.binary, ["--annotate", input.file, "Alpha paragraph.", "请补充具体例子。", "comment"], {
           env: input.env, cwd: input.cwd,
         })
@@ -143,7 +143,7 @@ async function harness(t, options = {}) {
           await writeFile(file, JSON.stringify(record))
         }
       }
-      // What the fork's S / Ctrl+S writes before quitting.
+      // What the reviewer's S / Ctrl+S writes before quitting.
       if (options.sendIntent) await writeFile(input.env.PLANNOTATOR_TUI_SEND_INTENT, "send\n")
     },
   })
@@ -235,7 +235,7 @@ test("last completed reply is found beyond the newest page of tool messages", as
   assert.match(h.sent[0].text, /msg_final/)
 })
 
-test("archived-only notes are preserved when upstream exports No annotations", async t => {
+test("archived-only notes are preserved when the reviewer exports No annotations", async t => {
   const h = await harness(t, { archived: true })
   await h.command.run()
   assert.deepEqual(h.sent, [])
@@ -381,7 +381,7 @@ for (const invalid of ["missing.md", "directory.md", "binary.txt", "large.txt"])
     assert.equal(h.pages(), 0)
     const error = h.notices.find(n => n.variant === "error")
     assert.ok(error, "A document error must be visible")
-    assert.doesNotMatch(error.message, /Can't find plannotator-tui/)
+    assert.doesNotMatch(error.message, /Can't find Annotate TUI/)
     assert.deepEqual(await readdir(h.root), [])
   })
 }

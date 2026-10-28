@@ -8,6 +8,7 @@ import { createWebReview } from "./web-review.mjs"
 import { wantsBrowser } from "./targets.mjs"
 import { prepareTheme } from "./theme.mjs"
 import { createInputSource } from "./input-source.mjs"
+import { resolveTuiBinary } from "./tui/binary.mjs"
 
 const execute = promisify(execFile)
 const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
@@ -143,14 +144,14 @@ async function interactive({ binary, file, cwd, env, signal }) {
     child.once("error", reject)
     child.once("close", (code, termination) => {
       if (code === 0) resolve()
-      else reject(new Error(`plannotator-tui exited: ${termination ?? code}`))
+      else reject(new Error(`Annotate TUI exited: ${termination ?? code}`))
     })
   })
 }
 
 export function createReviewCommand(context, options = {}) {
   const web = createWebReview(context, options.web)
-  const binary = options.binary ?? context.options.binary ?? "plannotator-tui"
+  const binary = resolveTuiBinary(options.binary ?? context.options.binary)
   const runInteractive = options.interactive ?? interactive
   const inputSource = options.inputSource ?? createInputSource(context.options.inputSource)
   let active
@@ -212,7 +213,7 @@ export function createReviewCommand(context, options = {}) {
       if ((options.inheritTheme ?? context.options.inheritTheme) === true) {
         env = await prepareTheme({ binary, theme: context.theme, directory, env, signal: controller.signal })
       }
-      // A capable binary writes "send" here when q or Ctrl+S quits with notes; upstream ignores it.
+      // The reviewer writes "send" here when q or Ctrl+S quits with notes.
       const intentPath = path.join(directory, "send-intent")
       env.PLANNOTATOR_TUI_SEND_INTENT = intentPath
       context.ui.dialog.clear()
@@ -281,7 +282,7 @@ export function createReviewCommand(context, options = {}) {
     } catch (error) {
       if (!disposed) {
         const detail = error?.code === "ENOENT"
-          ? "Can't find plannotator-tui. Check that it is installed and on PATH."
+          ? "Can't find Annotate TUI. Run npm run build:tui in the checkout, or reinstall the package. Check any custom binary option."
           : error instanceof Error ? error.message : String(error)
         const recovery = keepDraft && directory
           ? `\nThe draft was kept in ${directory}. If it was exported, the feedback is in feedback.md.`

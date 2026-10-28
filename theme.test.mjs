@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { prepareTheme, themeColors } from "./theme.mjs"
+import { resolveTuiBinary } from "./tui/binary.mjs"
 
 const rgba = (r, g, b, a = 1) => ({ r: r / 255, g: g / 255, b: b / 255, a })
 function theme() {
@@ -54,8 +55,8 @@ test("light selections use a legible foreground from the host palette", () => {
   assert.equal(colors["cursor-fg"], "#282a36")
 })
 
-const binary = process.env.ANNOTATE_THEME_BINARY
-test("real fork validates an isolated palette while preserving layout and the user's config", { skip: !binary }, async t => {
+const binary = resolveTuiBinary(process.env.ANNOTATE_THEME_BINARY)
+test("bundled reviewer validates an isolated palette while preserving layout and the user's config", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "annotate-theme-test-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const source = path.join(directory, "user.toml")

@@ -1,12 +1,14 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createReviewCommand } from "./review.mjs"
 import { createAsciiHold, createInputSource } from "./input-source.mjs"
+import { createReferenceCommand } from "./reference-command.mjs"
 
 export default Plugin.define({
   id: "opencode-annotate",
   setup(context) {
     const inputSource = createInputSource(context.options.inputSource)
     const review = createReviewCommand(context, { inputSource })
+    const reference = createReferenceCommand(context)
     // Permission prompts answer with single letters, which an input method swallows.
     const hold = createAsciiHold(inputSource)
     const stopAsked = context.data.on("permission.asked", event => hold.enter(event.data.id))
@@ -28,7 +30,7 @@ export default Plugin.define({
           }, {
             id: "opencode-annotate.annotate-last",
             title: "Annotate last reply (TUI)",
-            description: "Annotate the latest completed reply; q sends (fork), or q then confirm",
+            description: "Annotate the latest completed reply; q sends and returns",
             group: "Annotate",
             palette: true,
             // Keep slash submission with a trailing space local to the command.
@@ -59,6 +61,14 @@ export default Plugin.define({
             palette: true,
             slash: { name: "annotate-web", arguments: true },
             run: review.web,
+          }, {
+            id: "opencode-annotate.ref",
+            title: "Reference another conversation",
+            description: "Attach a past conversation by title or session ID; --all searches across projects",
+            group: "Annotate",
+            palette: true,
+            slash: { name: "ref", arguments: true },
+            run: reference.run,
           }],
         }))
         return null
@@ -68,6 +78,7 @@ export default Plugin.define({
       stopAsked()
       stopReplied()
       review.dispose()
+      reference.dispose()
       unmount()
     }
   },

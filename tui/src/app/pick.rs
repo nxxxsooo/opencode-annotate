@@ -1,0 +1,299 @@
+//! The message picker: which of the agent's recent messages to review. Newest first, the
+//! newest already open behind it.
+
+#[cfg(unix)]
+use std::process::Command;
+use std::sync::OnceLock;
+
+use anyhow::Result;
+use plannotator_tui_hosts::Message;
+use ratatui::Frame;
+use ratatui::crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use unicode_width::UnicodeWidthStr as _;
+
+use super::draw::picker_help;
+use super::{App, Mode, Open};
+use crate::keys::{self, Action};
+use crate::last::message_source;
+use crate::theme::palette;
+
+const PICK_MAX_WIDTH: u16 = 90;
+
+impl App {
+    /// Open with `messages` (newest first) as candidates; the picker shows when there is a
+    /// choice to make. `transcript` is the path shown and archived; `session_id` is the
+    /// host's own id for the session, when known.
+    ///
+    /// `newest` asks for the newest message and nothing in the way: the candidates are
+    /// still kept, so `p` opens the picker on them exactly as escaping it would have.
+    pub(crate) fn open_message(
+        host: &str,
+        transcript: &str,
+        session_id: Option<&str>,
+        messages: Vec<Message>,
+        width: usize,
+        delivery: Box<dyn crate::delivery::Delivery>,
+        newest: bool,
+    ) -> Result<Self> {
+        let Some(first) = messages.first() else { anyhow::bail!("no message to open") };
+        let mut app = Self::open(message_source(host, session_id, first), width, delivery)?;
+        host.clone_into(&mut app.message_host);
+        transcript.clone_into(&mut app.message_transcript);
+        app.message_session = session_id.map(str::to_owned);
+        app.candidates = messages;
+        if app.candidates.len() > 1 && !newest {
+            app.mode = Mode::Pick;
+        }
+        Ok(app)
+    }
+
+    /// Show candidate `index` behind the picker, staying in the picker.
+    ///
+    /// The document being left is kept rather than dropped. A reply review's
+    /// annotations live only in memory, so moving away from one and back again must
+    /// not lose them.
+    fn show_candidate(&mut self, index: usize) -> Result<()> {
+        if index == self.pick_open {
+            return Ok(());
+        }
+        let next = if let Some(open) = self.pick_cache.remove(&index) {
+            open
+        } else {
+            let Some(message) = self.candidates.get(index) else { return Ok(()) };
+            let source = message_source(&self.message_host, self.message_session.as_deref(), message);
+            Open::new(source, self.open.layout.width, &self.data_dir, &self.project)?
+        };
+        let leaving = std::mem::replace(&mut self.open, next);
+        self.pick_cache.insert(self.pick_open, leaving);
+        self.pick_open = index;
+        self.scroll = 0;
+        self.selected = 0;
+        self.cursor = (0, 0);
+        self.rail_cursor = 0;
+        self.clear_selection();
+        self.derive_send_state();
+        Ok(())
+    }
+
+    /// Swap the open document for candidate `index` and leave the picker.
+    fn open_candidate(&mut self, index: usize) -> Result<()> {
+        if self.candidates.get(index).is_none() {
+            return Ok(());
+        }
+        self.show_candidate(index)?;
+        self.mode = Mode::Browse;
+        self.status = Some(format!("message {} of {}", index + 1, self.candidates.len()));
+        Ok(())
+    }
+
+    pub(super) fn reopen_picker(&mut self) {
+        if self.candidates.len() > 1 {
+            self.pick_return = self.pick_open;
+            self.pick_cursor = self.pick_open;
+            self.mode = Mode::Pick;
+        }
+    }
+
+    pub(super) fn pick_key(&mut self, key: KeyEvent) -> Result<()> {
+        let last = self.candidates.len().saturating_sub(1);
+        match self.keys.action(&key, keys::PICK) {
+            Some(Action::Down) => {
+                self.pick_cursor = (self.pick_cursor + 1).min(last);
+                return self.show_candidate(self.pick_cursor);
+            }
+            Some(Action::Up) => {
+                self.pick_cursor = self.pick_cursor.saturating_sub(1);
+                return self.show_candidate(self.pick_cursor);
+            }
+            Some(Action::Confirm) => return self.open_candidate(self.pick_cursor),
+            Some(Action::Back) => {
+                self.show_candidate(self.pick_return)?;
+                self.pick_cursor = self.pick_return;
+                self.mode = Mode::Browse;
+            }
+            Some(Action::Quit) => self.quit = true,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(super) fn pick_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return Ok(());
+        }
+        let hit =
+            self.geometry.pick_rows.iter().find(|(rect, _)| {
+                mouse.row == rect.y && mouse.column >= rect.x && mouse.column < rect.right()
+            });
+        match hit.map(|(_, index)| *index) {
+            Some(index) => self.open_candidate(index),
+            None => Ok(()),
+        }
+    }
+
+    pub(super) fn draw_pick(&mut self, frame: &mut Frame) {
+        let area = self.viewport(frame.area());
+        let width = PICK_MAX_WIDTH.min(area.width.saturating_sub(4)).max(20);
+        let rows = self.candidates.len() as u16;
+        let height = (rows + 2).min(area.height.saturating_sub(2)).max(3);
+        let rect = Rect {
+            x: area.x + (area.width - width) / 2,
+            y: area.y + (area.height - height) / 2,
+            width,
+            height,
+        };
+        frame.render_widget(Clear, rect);
+        let boxed = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(palette().accent))
+            .title(Span::styled(" which message? ", Style::new().dim()))
+            .title_bottom(Span::styled(
+                picker_help(
+                    "preview",
+                    [
+                        self.keys.labelled(Action::Confirm, "open"),
+                        self.keys.labelled(Action::Back, "cancel"),
+                        self.keys.labelled(Action::Quit, "quit"),
+                    ],
+                ),
+                Style::new().dim(),
+            ));
+        let inner = boxed.inner(rect);
+        frame.render_widget(boxed, rect);
+        let mut pick_rows = Vec::new();
+        let lines: Vec<Line<'static>> = self
+            .candidates
+            .iter()
+            .enumerate()
+            .take(usize::from(inner.height))
+            .map(|(index, message)| {
+                let row = Rect { x: inner.x, y: inner.y + index as u16, width: inner.width, height: 1 };
+                pick_rows.push((row, index));
+                let text =
+                    fit(&pick_label(message, self.clock_offset), usize::from(inner.width).saturating_sub(1));
+                let style = if index == self.pick_cursor { palette().selection } else { Style::new() };
+                Line::from(Span::styled(format!(" {text}"), style))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), inner);
+        self.geometry.pick_rows = pick_rows;
+    }
+}
+
+/// `HH:MM  first line of the message`, the clock in the viewer's timezone.
+fn pick_label(message: &Message, offset_minutes: i32) -> String {
+    let time =
+        message.at.as_deref().and_then(|at| clock(at, offset_minutes)).unwrap_or_else(|| "     ".to_owned());
+    let first = message.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    format!("{time}  {first}")
+}
+
+/// `HH:MM` out of an RFC 3339 timestamp, moved to `offset_minutes` east of UTC.
+///
+/// Only a `Z` stamp is moved. One that already carries an offset is local to whoever
+/// wrote it and is shown as written. No date arithmetic is needed: crossing midnight
+/// changes the date, not the clock face.
+fn clock(at: &str, offset_minutes: i32) -> Option<String> {
+    let time = at.get(11..16)?;
+    let (hours, minutes) = time.split_once(':')?;
+    let hours: i32 = hours.parse().ok()?;
+    let minutes: i32 = minutes.parse().ok()?;
+    if !at.ends_with(['Z', 'z']) {
+        return Some(time.to_owned());
+    }
+    let total = (hours * 60 + minutes + offset_minutes).rem_euclid(24 * 60);
+    Some(format!("{:02}:{:02}", total / 60, total % 60))
+}
+
+/// Minutes east of UTC for this machine, resolved once.
+///
+/// `std` has no local-time API. On Unix the offset comes from `date +%z`, the same
+/// shell-out `last::locate` already uses; on Windows, from the time zone the OS reports,
+/// which `time` reads without touching the environment. Anything unexpected leaves the
+/// clock in UTC, which is what it showed before.
+pub(super) fn local_offset_minutes() -> i32 {
+    static OFFSET: OnceLock<i32> = OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        #[cfg(unix)]
+        {
+            let Ok(output) = Command::new("date").arg("+%z").output() else { return 0 };
+            let Ok(text) = String::from_utf8(output.stdout) else { return 0 };
+            parse_utc_offset(text.trim()).unwrap_or(0)
+        }
+        #[cfg(windows)]
+        {
+            time::UtcOffset::current_local_offset().map_or(0, |offset| i32::from(offset.whole_minutes()))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            0
+        }
+    })
+}
+
+/// `+0530` or `-0800` as minutes east of UTC.
+#[cfg(unix)]
+fn parse_utc_offset(zone: &str) -> Option<i32> {
+    let sign = match zone.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let hours: i32 = zone.get(1..3)?.parse().ok()?;
+    let minutes: i32 = zone.get(3..5)?.parse().ok()?;
+    Some(sign * (hours * 60 + minutes))
+}
+
+fn fit(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_owned();
+    }
+    let mut out = String::new();
+    for ch in text.chars() {
+        if out.width() + 1 >= width {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    use super::parse_utc_offset;
+    use super::{clock, local_offset_minutes};
+
+    #[test]
+    fn a_utc_stamp_is_shown_on_the_local_clock() {
+        assert_eq!(clock("2026-08-31T19:53:52.563Z", 330).as_deref(), Some("01:23"));
+        assert_eq!(clock("2026-08-31T19:53:52.563Z", 0).as_deref(), Some("19:53"));
+        assert_eq!(clock("2026-08-31T02:10:00.000Z", -480).as_deref(), Some("18:10"));
+    }
+
+    #[test]
+    fn a_stamp_that_already_carries_an_offset_is_shown_as_written() {
+        assert_eq!(clock("2026-08-31T19:53:52+05:30", 330).as_deref(), Some("19:53"));
+    }
+
+    #[test]
+    fn the_local_offset_is_a_real_time_zone_on_every_platform() {
+        let minutes = local_offset_minutes();
+        assert!((-14 * 60..=14 * 60).contains(&minutes), "{minutes}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_zone_string_reads_as_minutes_east_of_utc() {
+        assert_eq!(parse_utc_offset("+0530"), Some(330));
+        assert_eq!(parse_utc_offset("-0800"), Some(-480));
+        assert_eq!(parse_utc_offset("+0000"), Some(0));
+        assert_eq!(parse_utc_offset("nonsense"), None);
+    }
+}

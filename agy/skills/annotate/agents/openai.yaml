@@ -1,0 +1,3 @@
+interface:
+  display_name: "Annotate for AGY"
+  short_description: "Review replies, documents and webpages in an AGY session"

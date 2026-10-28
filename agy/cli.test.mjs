@@ -3,16 +3,14 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { mkdir, rm } from "node:fs/promises"
-import { resolveAdaptedBinary, getAdaptedThemeTokens } from "./cli.mjs"
+import { getAdaptedThemeTokens } from "./cli.mjs"
+import { bundledBinary, resolveTuiBinary } from "../tui/binary.mjs"
 import { prepareTheme } from "../theme.mjs"
 
-test("resolveAdaptedBinary honors custom binary or finds local annotate fork", () => {
-  const custom = "/custom/bin/plannotator-tui"
-  assert.equal(resolveAdaptedBinary(custom), custom)
-
-  const resolved = resolveAdaptedBinary()
-  // On this system, ~/.local/bin/plannotator-tui-annotate exists
-  assert.match(resolved, /(plannotator-tui-annotate|plannotator-tui)$/)
+test("both adapters resolve the packaged reviewer or an explicit custom binary", () => {
+  const custom = "/custom/bin/annotate-tui"
+  assert.equal(resolveTuiBinary(custom), custom)
+  assert.equal(resolveTuiBinary(), bundledBinary())
 })
 
 test("getAdaptedThemeTokens returns valid RGBA palette tokens", () => {
@@ -26,8 +24,8 @@ test("getAdaptedThemeTokens returns valid RGBA palette tokens", () => {
   assert.equal(typeof tokens.text.base.a, "number")
 })
 
-test("prepareTheme succeeds with getAdaptedThemeTokens when fork is available", async t => {
-  const binary = resolveAdaptedBinary()
+test("AGY theme tokens work with the bundled reviewer", async () => {
+  const binary = resolveTuiBinary()
   const tempDir = path.join(os.tmpdir(), `agy-cli-test-${Date.now()}`)
   await mkdir(tempDir, { recursive: true })
   try {
@@ -39,12 +37,6 @@ test("prepareTheme succeeds with getAdaptedThemeTokens when fork is available", 
     })
     assert.ok(env.PLANNOTATOR_TUI_CONFIG)
     assert.ok(env.PLANNOTATOR_TUI_CONFIG.endsWith("theme.toml"))
-  } catch (err) {
-    if (/color-capable Plannotator fork/i.test(err.message)) {
-      t.skip("Upstream plannotator-tui does not support theme command")
-      return
-    }
-    throw err
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }

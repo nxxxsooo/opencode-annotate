@@ -13,7 +13,9 @@ To switch a maintainer installation from a local checkout back to npm, run
 `@nxxxsooo/opencode-annotate@latest`. Reopen the terminal client.
 
 The npm package, Git tag and GitHub Release use the same semver. The maintained
-source is this repository; OpenCode installs the published npm artifact.
+source is this repository, including the Rust reviewer in `tui/`; OpenCode installs
+the published npm artifact with its matching native executables. There is no separate
+reviewer repository, release, upstream download or synchronization step.
 
 ## Bootstrap
 
@@ -43,10 +45,17 @@ provenance was first exercised by 0.6.0 on 2026-10-22.
 
 ## Subsequent releases
 
-1. Review the worktree and run `npm run check` plus `npm run test:smoke` for runtime changes.
-2. Bump `package.json` and `package-lock.json`, and update `CHANGELOG.md`.
+1. Review the worktree. Run `npm run build:tui`, `npm run check:tui`, `npm run check`
+   and `npm run test:smoke` for runtime changes.
+   Run `npm run test:references` when changing the server tools, history reader or `/ref`.
+2. Bump `package.json`, `package-lock.json` and the workspace version in `tui/Cargo.toml`.
+   Refresh `tui/Cargo.lock` with Cargo, rebuild, and update `CHANGELOG.md`.
 3. Commit the exact release state and create its `v<version>` tag. Push the branch and tag.
-4. Watch `publish.yml`. It validates the tag, runs checks and publishes through OIDC.
+4. Watch `publish.yml`. Its reusable `native.yml` builds and tests the same tagged source
+   on macOS arm64/x64, Linux arm64/x64 and Windows x64. The publish job collects all five
+   executables, restores their executable bits, verifies completeness and the host version,
+   then runs package checks and publishes through OIDC. Rust source stays in Git; build
+   caches are excluded. The npm allowlist includes native executables, launcher, resolver and license.
 5. If that version already exists (for example, the bootstrap), the workflow
    compares published file bytes and executable bits with the local package before
    skipping the upload. Compressed archive checksums can differ between platforms.
@@ -59,7 +68,12 @@ provenance was first exercised by 0.6.0 on 2026-10-22.
    opencode plugin list
    ```
 
-   Reopen the terminal client and smoke-test the published package, not only this checkout.
+    Reopen the terminal client and smoke-test the published package, not only this checkout.
+
+    Releases with the server entrypoint require a single entry in `opencode.json(c)`.
+    Move a previous TUI-only entry from `cli.json`, preserving its options, so the same
+    package supplies both agent tools and TUI commands. To check a packed artifact locally,
+    extract it and run `ANNOTATE_PACKAGE_ROOT=<extracted-package> npm run test:references`.
 
 Never overwrite a published tag or version. If publication fails, diagnose the
 specific surface and retry only an idempotent step. Completion requires the source,

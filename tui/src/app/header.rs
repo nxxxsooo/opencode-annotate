@@ -1,0 +1,96 @@
+//! The header: the send button and, for file and folder reviews, the Review menu button.
+//! The two wrap onto another row only when a pane is too narrow for both.
+
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
+use unicode_width::UnicodeWidthStr;
+
+use super::App;
+use super::send::SendState;
+use crate::keys::Action;
+use crate::theme::palette;
+
+const REVIEW_LABEL: &str = "Review \u{25be}";
+
+#[derive(Debug, Clone, Copy)]
+enum Button {
+    Send,
+    Review,
+}
+
+impl App {
+    /// Buttons with their rects relative to the header, right to left: send on the edge,
+    /// the Review menu to its left.
+    fn header_buttons(&self, width: u16) -> Vec<(Button, String, Rect)> {
+        if width == 0 {
+            return Vec::new();
+        }
+        let mut labels = vec![(Button::Send, self.send_label())];
+        if self.has_review_menu() {
+            labels.push((Button::Review, self.review_label()));
+        }
+        let mut right = width;
+        let mut y = 0;
+        labels
+            .into_iter()
+            .map(|(button, label)| {
+                let label = format!(" {label} ");
+                let button_width = label.width().min(usize::from(width)) as u16;
+                if button_width > right {
+                    y += 1;
+                    right = width;
+                }
+                let rect = Rect { x: right - button_width, y, width: button_width, height: 1 };
+                right = rect.x.saturating_sub(1);
+                (button, label, rect)
+            })
+            .collect()
+    }
+
+    /// The Review button names the key that opens the menu, when it has one.
+    fn review_label(&self) -> String {
+        match self.keys.hint(Action::ReviewMenu) {
+            key if key.is_empty() => REVIEW_LABEL.to_owned(),
+            key => format!("{REVIEW_LABEL} ({key})"),
+        }
+    }
+
+    pub(super) fn header_height(&self, width: u16) -> u16 {
+        self.header_buttons(width).last().map_or(1, |(_, _, rect)| rect.y + 1)
+    }
+
+    pub(super) fn draw_header(&mut self, frame: &mut Frame, area: Rect) {
+        for (button, label, mut rect) in self.header_buttons(area.width) {
+            if rect.y >= area.height {
+                continue;
+            }
+            rect.x += area.x;
+            rect.y += area.y;
+            let style = match button {
+                Button::Send => {
+                    self.geometry.send_button = Some(rect);
+                    self.button_style()
+                }
+                Button::Review => {
+                    self.geometry.review_button = Some(rect);
+                    Style::new().fg(palette().accent).bg(palette().toolbar_bg)
+                }
+            };
+            frame.buffer_mut().set_span(rect.x, rect.y, &Span::styled(label, style), rect.width);
+        }
+    }
+
+    /// At zero the button is still drawn and clickable; it reports the no-op in the footer.
+    fn button_style(&self) -> Style {
+        match &self.send_state {
+            SendState::Ready if self.send_count() == 0 => {
+                Style::new().fg(palette().idle_fg).bg(palette().toolbar_bg).add_modifier(Modifier::DIM)
+            }
+            SendState::Ready => Style::new().fg(palette().send_fg).bg(palette().send_bg).bold(),
+            SendState::Sent => Style::new().fg(palette().send_fg).bg(palette().sent_bg).bold(),
+            SendState::Blocked(_) => Style::new().fg(palette().send_fg).bg(palette().blocked_bg).bold(),
+        }
+    }
+}

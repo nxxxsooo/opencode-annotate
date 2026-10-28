@@ -1,26 +1,42 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.9.1",
-  "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, then send the feedback to the originating session.",
+  "version": "0.10.0",
+  "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, and reference previous conversations.",
   "license": "MIT",
   "type": "module",
   "exports": {
+    ".": "./server.ts",
     "./tui": "./tui.ts"
   },
   "bin": {
+    "annotate-tui": "./tui/run.mjs",
     "agy-annotate": "./agy/cli.mjs"
   },
   "scripts": {
+    "build:tui": "node scripts/build-tui.mjs",
+    "check:tui": "cargo fmt --manifest-path tui/Cargo.toml --all --check && cargo clippy --manifest-path tui/Cargo.toml --workspace --all-targets --locked -- -D warnings && cargo test --manifest-path tui/Cargo.toml --workspace --locked",
     "test": "node --test *.test.mjs bridge/*.test.mjs agy/*.test.mjs",
     "test:browser": "node tests/browser.mjs",
     "install:bridge": "node scripts/install-bridge.mjs",
     "install:plugin": "node scripts/install-plugin.mjs",
     "test:smoke": "python3 smoke.py",
-    "check": "node --check review.mjs && npm test && npm pack --dry-run",
-    "prepublishOnly": "npm run check"
+    "test:references": "python3 tests/references-smoke.py",
+    "check": "node scripts/verify-tui.mjs && node --check review.mjs && npm test && npm pack --dry-run",
+    "prepack": "node scripts/verify-tui.mjs",
+    "prepublishOnly": "node scripts/verify-tui.mjs --all && npm run check"
   },
   "files": [
     "tui.ts",
+    "tui/binary.mjs",
+    "tui/run.mjs",
+    "tui/bin",
+    "tui/LICENSE",
+    "tui/README.md",
+    "server.ts",
+    "session-tools.mjs",
+    "server-history.mjs",
+    "session-reference.mjs",
+    "reference-command.mjs",
     "review.mjs",
     "theme.mjs",
     "input-source.mjs",
@@ -33,6 +49,7 @@
     "agy",
     "scripts/install-bridge.mjs",
     "scripts/install-plugin.mjs",
+    "scripts/verify-tui.mjs",
     "scripts/migrate-page-context.mjs",
     "README.md",
     "LICENSE",
@@ -42,7 +59,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@opencode/plugin": ">=2.0.22 <3"
+    "@opencode/plugin": ">=2.2.0 <3"
   },
   "peerDependenciesMeta": {
     "@opencode/plugin": {

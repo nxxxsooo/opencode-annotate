@@ -1,4 +1,4 @@
-"""Headless real OpenCode + plannotator-tui round trip; no model call or visible window."""
+"""Headless OpenCode + bundled Annotate TUI round trip; no model call or visible window."""
 import json
 import os
 from pathlib import Path
@@ -17,8 +17,8 @@ INHERIT_THEME = os.environ.get("ANNOTATE_INHERIT_THEME") == "1"
 THEME_MODE = os.environ.get("ANNOTATE_THEME_MODE", "dark")
 if INHERIT_THEME:
     BINARY_OPTIONS["inheritTheme"] = True
-SEND_KEY = os.environ.get("ANNOTATE_SEND_KEY") == "1"
-# With the fork, q sends notes directly; Ctrl+C is the key that leaves them for OpenCode to ask.
+SEND_KEY = os.environ.get("ANNOTATE_SEND_KEY", "1") == "1"
+# q sends notes directly; Ctrl+C leaves them for OpenCode to ask.
 ASK = "C-c" if SEND_KEY else "q"
 EXPECTED_MARGIN = int(os.environ.get("ANNOTATE_EXPECT_MARGIN", "0"))
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"

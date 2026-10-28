@@ -1,15 +1,14 @@
 # Inherited TUI colors
 
-The development option `inheritTheme: true` uses the current OpenCode `context.theme`
-on each invocation. It requires the extended Plannotator fork
-(`nxxxsooo/plannotator-tui`, branch `local/opencode`): upstream's `[colors]` (PR #105)
-plus the document-width, send-handoff and local palette patches. Upstream Plannotator 0.9.4 does not support it.
+The option `inheritTheme: true` uses the current OpenCode `context.theme` on each
+invocation. The owned reviewer in [`tui/`](../tui/README.md) includes the palette,
+document-width, send-handoff and input-method behavior. Both adapters use the executable
+shipped with this package.
 
 ```json
 {
   "package": "/absolute/path/to/opencode-annotate",
   "options": {
-    "binary": "/absolute/path/to/plannotator-tui-annotate",
     "inheritTheme": true
   }
 }
@@ -27,8 +26,8 @@ plus the document-width, send-handoff and local palette patches. Upstream Planno
    follows the review's cleanup/recovery lifecycle and is never written over the user file.
 
 A scoped launcher must use `${PLANNOTATOR_TUI_CONFIG:-<default-config>}` so the
-plugin's per-review copy takes precedence. Without `inheritTheme`, the existing
-light/dark integration continues to work with the upstream release.
+plugin's per-review copy takes precedence. Without `inheritTheme`, the reviewer follows
+the host's light/dark mode using its own palette.
 
 ## Mapping
 
@@ -55,15 +54,16 @@ reviewer; only weight and color are set per span.
 RGBA channels are resolved by OpenCode. Transparent tokens use terminal reset;
 partial opacity is composited onto an opaque base. A partial-alpha token over a
 transparent base is rejected because its actual terminal backdrop is unavailable.
-The fork fills unset cell colors after drawing, including cleared popups and margins.
+The reviewer fills unset cell colors after drawing, including cleared popups and margins.
 
 ## Verification
 
 ```sh
-ANNOTATE_THEME_BINARY=/path/to/fork/plannotator-tui npm run check
-ANNOTATE_TUI_BINARY=/path/to/launcher ANNOTATE_INHERIT_THEME=1 \
+npm run build:tui
+npm run check
+ANNOTATE_INHERIT_THEME=1 \
   ANNOTATE_THEME_MODE=dark ANNOTATE_EXPECT_MARGIN=2 npm run test:smoke
-ANNOTATE_TUI_BINARY=/path/to/launcher ANNOTATE_INHERIT_THEME=1 \
+ANNOTATE_INHERIT_THEME=1 \
   ANNOTATE_THEME_MODE=light ANNOTATE_EXPECT_MARGIN=2 npm run test:smoke
 ```
 
@@ -71,13 +71,13 @@ The smoke test compares captured ANSI colors to the real host's resolved tokens 
 exercises annotation creation, terminal restoration, confirmation and exact-session
 delivery with `resume: false`. No model turn is started. `ANNOTATE_EXPECT_MARGIN` is the
 blank margin expected in the 140-column test pane: `[ui].horizontal_margin` while
-`max_width` exceeds the pane. `ANNOTATE_SEND_KEY=1` tests the fork's one-step sends
-(branch `local/opencode`): `Ctrl+S` and `q` must send without an OpenCode confirmation,
+`max_width` exceeds the pane. The smoke test checks one-step sends by default:
+`Ctrl+S` and `q` must send without an OpenCode confirmation,
 and the confirmation paths leave with `Ctrl+C` instead of `q`.
 
 ## Layout
 
-The scoped `annotate.toml` sets `horizontal_margin = 2`, `max_width = 168` and
-`doc_width = 120`. `doc_width` (fork branch `local/opencode`) caps the document's text
+The user file `~/.config/opencode-annotate/tui.toml` can set `horizontal_margin = 2`,
+`max_width = 168` and `doc_width = 120`. `doc_width` caps the document's text
 columns, so wide terminals keep a readable column beside a 42-column comment rail.
 Font family and size stay with the terminal.

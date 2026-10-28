@@ -1,0 +1,379 @@
+#![allow(clippy::expect_used, reason = "tests assert by panicking")]
+
+use super::*;
+use crate::config::Config;
+use crate::herdr::context::HerdrContext;
+
+fn env(pane_id: Option<&str>, context: Option<HerdrContext>) -> HerdrEnv {
+    HerdrEnv { in_herdr: true, pane_id: pane_id.map(str::to_owned), context, ..HerdrEnv::default() }
+}
+
+fn temp_folder(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("plannotator-tui-launch-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("docs")).expect("temp dir");
+    std::fs::write(dir.join("docs/plan.md"), "# plan\n").expect("file");
+    dir
+}
+
+#[test]
+fn human_keybind_opens_the_focused_folder_and_delivers_to_its_agent() {
+    let root = temp_folder("keybind");
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_cwd: Some(root.display().to_string()),
+        focused_pane_agent: Some("claude".into()),
+        workspace_cwd: Some("/elsewhere".into()),
+        invocation_source: Some("keybinding".into()),
+        ..HerdrContext::default()
+    };
+    let launch = plan(&env(None, Some(context)), &Config::default(), OpenArgs::default(), Path::new("/"))
+        .expect("plans");
+    assert_eq!(launch.file, root);
+    assert_eq!(launch.cwd, root, "a folder is its own cwd");
+    assert_eq!(launch.placement, Placement::Overlay);
+    assert_eq!(launch.deliver, Some(Target { pane: "w1:p1".into(), agent: Some("claude".into()) }));
+    assert_eq!(
+        argv(&launch),
+        vec![
+            "plugin",
+            "pane",
+            "open",
+            "--plugin",
+            "annotate",
+            "--entrypoint",
+            "doc",
+            "--placement",
+            "overlay",
+            "--focus",
+            "--cwd",
+            &root.display().to_string(),
+            "--env",
+            &format!("PLANNOTATOR_TUI_FILE={}", root.display()),
+            "--env",
+            "PLANNOTATOR_TUI_DELIVER_TO=w1:p1",
+            "--env",
+            "PLANNOTATOR_TUI_DELIVER_AGENT=claude",
+        ]
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn agent_skill_delivers_to_and_splits_beside_the_calling_pane() {
+    let root = temp_folder("skill");
+    let config = Config::parse("[herdr]\nplacement = \"split\"\n").expect("config");
+    let args = OpenArgs { path: Some(PathBuf::from("docs/plan.md")), ..OpenArgs::default() };
+    let launch = plan(&env(Some("w2:p4"), None), &config, args, &root).expect("plans");
+    assert_eq!(launch.file, root.join("docs/plan.md"), "relative paths resolve against the caller's cwd");
+    assert_eq!(launch.cwd, root.join("docs"), "a file's cwd is its folder");
+    assert_eq!(launch.deliver, Some(Target { pane: "w2:p4".into(), agent: None }));
+    assert_eq!(launch.target_pane.as_deref(), Some("w2:p4"));
+    let args = argv(&launch);
+    let after_placement: Vec<&str> = args.iter().map(String::as_str).skip(7).take(6).collect();
+    assert_eq!(after_placement, ["--placement", "split", "--direction", "right", "--target-pane", "w2:p4"]);
+    assert!(args.iter().any(|a| a == "PLANNOTATOR_TUI_DELIVER_TO=w2:p4"));
+    assert!(!args.iter().any(|a| a.starts_with("PLANNOTATOR_TUI_DELIVER_AGENT")));
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn mirror_defaults_to_a_split_next_to_the_remote_invoking_pane() {
+    let context = HerdrContext {
+        focused_pane_id: Some("w2:p4".into()),
+        focused_pane_agent: Some("codex".into()),
+        invocation_source: Some("mirror".into()),
+        ..HerdrContext::default()
+    };
+    let env = env(None, Some(context));
+    let launch = plan(&env, &Config::default(), OpenArgs::default(), Path::new("/"))
+        .expect("plans a mirrored document");
+    assert_eq!(launch.placement, Placement::Split);
+    assert!(argv(&launch).windows(2).any(|pair| pair == ["--target-pane", "w2:p4"]));
+    let agent = r#"{"result":{"agent":{"agent":"codex","agent_session":{"kind":"path","value":"/sessions/exact.jsonl"}}}}"#;
+    let last = plan_last(&env, &Config::default(), OpenArgs::default(), Path::new("/"), None, Some(agent))
+        .expect("plans the same pane's reply");
+    assert_eq!(last.placement, Placement::Split);
+    assert_eq!(last.target_pane.as_deref(), Some("w2:p4"));
+    assert_eq!(last.session, Some(AgentSession::Path("/sessions/exact.jsonl".into())));
+}
+
+#[test]
+fn explicit_placement_still_wins_over_the_mirror_default() {
+    let mut env =
+        env(None, Some(HerdrContext { invocation_source: Some("mirror".into()), ..HerdrContext::default() }));
+    env.placement = Some("popup".into());
+    let launch =
+        plan(&env, &Config::default(), OpenArgs::default(), Path::new("/")).expect("environment placement");
+    assert_eq!(launch.placement, Placement::Popup);
+    let args = OpenArgs { placement: Some(Placement::Overlay), ..OpenArgs::default() };
+    let launch = plan(&env, &Config::default(), args, Path::new("/")).expect("explicit argument placement");
+    assert_eq!(launch.placement, Placement::Overlay);
+}
+
+#[test]
+fn ctrl_click_opens_the_linked_file() {
+    let root = temp_folder("click");
+    // `file:///abs/path` on Unix; `file:///C:/abs/path` on Windows.
+    let url = format!(
+        "file:///{}/docs/plan.md",
+        root.display().to_string().replace('\\', "/").trim_start_matches('/')
+    );
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_agent: Some("claude".into()),
+        focused_pane_cwd: Some("/should/not/win".into()),
+        clicked_url: Some(url),
+        ..HerdrContext::default()
+    };
+    let launch = plan(&env(None, Some(context)), &Config::default(), OpenArgs::default(), Path::new("/"))
+        .expect("plans");
+    assert_eq!(launch.file, root.join("docs/plan.md"));
+    assert_eq!(launch.cwd, root.join("docs"));
+    assert_eq!(launch.deliver.map(|t| t.pane), Some("w1:p1".into()));
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn only_file_urls_are_opened() {
+    assert_eq!(file_url_path("file:///a/b%20c.md"), Some(PathBuf::from("/a/b c.md")));
+    assert_eq!(file_url_path("file://localhost/a.md"), Some(PathBuf::from("/a.md")));
+    assert_eq!(file_url_path("https://github.com/x/README.md"), None);
+    assert_eq!(file_url_path("file://host/a.md"), None);
+}
+
+#[test]
+fn popup_placement_emits_size_and_no_target_pane() {
+    let config = Config::parse("[herdr]\npopup_width = \"100%\"\npopup_height = \"100%\"\n").expect("config");
+    let args = OpenArgs {
+        placement: Some(Placement::Popup),
+        deliver_to: Some("w1:p1".into()),
+        ..OpenArgs::default()
+    };
+    let launch = plan(&env(Some("w1:p9"), None), &config, args, Path::new("/tmp")).expect("plans");
+    assert_eq!(launch.deliver, Some(Target { pane: "w1:p1".into(), agent: None }), "--deliver-to wins");
+    let args = argv(&launch);
+    assert!(args.windows(2).any(|w| w == ["--width", "100%"]));
+    assert!(args.windows(2).any(|w| w == ["--height", "100%"]));
+    assert!(!args.iter().any(|a| a == "--target-pane"));
+}
+
+#[test]
+fn env_placement_beats_config_and_arg_beats_env() {
+    let config = Config::parse("[herdr]\nplacement = \"popup\"\n").expect("config");
+    let mut env = env(None, None);
+    env.placement = Some("split".into());
+    let launch = plan(&env, &config, OpenArgs::default(), Path::new("/tmp")).expect("plans");
+    assert_eq!(launch.placement, Placement::Split);
+    let args = OpenArgs { placement: Some(Placement::Overlay), ..OpenArgs::default() };
+    assert_eq!(plan(&env, &config, args, Path::new("/tmp")).expect("plans").placement, Placement::Overlay);
+    env.placement = Some("floating".into());
+    assert!(plan(&env, &config, OpenArgs::default(), Path::new("/tmp")).is_err());
+}
+
+#[test]
+fn run_refuses_outside_herdr() {
+    let launch = plan(&HerdrEnv::default(), &Config::default(), OpenArgs::default(), Path::new("/tmp"))
+        .expect("plans");
+    let err = run(&HerdrEnv::default(), &launch).expect_err("refused");
+    assert!(err.to_string().contains("not inside Herdr"));
+}
+
+#[test]
+fn a_human_in_a_plain_shell_pane_gets_no_agent_target() {
+    // A manifest action always carries a context; a focused pane without an agent is not a
+    // target, and HERDR_PANE_ID (set for the action too) must not become one either.
+    let context = HerdrContext { focused_pane_id: Some("w1:p2".into()), ..HerdrContext::default() };
+    let env = env(Some("w1:p2"), Some(context));
+    let launch = plan(&env, &Config::default(), OpenArgs::default(), Path::new("/tmp")).expect("plan");
+    assert_eq!(launch.deliver, None);
+    assert_eq!(launch.target_pane.as_deref(), Some("w1:p2"), "a split still opens beside the caller");
+}
+
+#[test]
+fn the_plugin_id_comes_from_the_environment() {
+    let env = HerdrEnv { in_herdr: true, plugin_id: Some("annotate".into()), ..HerdrEnv::default() };
+    let launch = plan(&env, &Config::default(), OpenArgs::default(), Path::new("/tmp")).expect("plan");
+    let args = argv(&launch);
+    let plugin = args.iter().position(|a| a == "--plugin").and_then(|i| args.get(i + 1));
+    assert_eq!(plugin.map(String::as_str), Some("annotate"));
+}
+
+const PROCESS_INFO: &str = r#"{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":91279,"foreground_processes":[{"argv":["claude"],"argv0":"claude","cmdline":"claude","cwd":"/w","name":"claude","pid":91279}],"pane_id":"w1:p1","shell_pid":84211},"type":"pane_process_info"}}"#;
+
+#[test]
+fn the_agent_pid_is_the_named_agent_process_else_the_group_leader() {
+    assert_eq!(agent_pid(PROCESS_INFO), Some((91279, "claude".into())));
+    let pi = PROCESS_INFO.replace(r#""name":"claude""#, r#""name":"pi""#);
+    assert_eq!(agent_pid(&pi), Some((91279, "pi".into())));
+    let unknown = PROCESS_INFO.replace(r#""name":"claude""#, r#""name":"aider""#);
+    assert_eq!(agent_pid(&unknown), Some((91279, "aider".into())), "unknown agents keep their name");
+    assert_eq!(agent_pid("{}"), None);
+}
+
+#[test]
+fn a_last_launch_carries_the_pid_and_host_instead_of_a_file() {
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_agent: Some("claude".into()),
+        focused_pane_cwd: Some("/w".into()),
+        ..HerdrContext::default()
+    };
+    let launch = plan_last(
+        &env(None, Some(context)),
+        &Config::default(),
+        OpenArgs::default(),
+        Path::new("/"),
+        Some(PROCESS_INFO),
+        None,
+    )
+    .expect("plans");
+    assert_eq!(launch.message, Some(AgentMessage { host: "claude".into(), pid: Some(91279) }));
+    assert_eq!(launch.deliver.as_ref().map(|t| t.pane.as_str()), Some("w1:p1"));
+    let args = argv(&launch);
+    assert!(args.contains(&"PLANNOTATOR_TUI_MESSAGE_PID=91279".to_owned()));
+    assert!(args.contains(&"PLANNOTATOR_TUI_HOST=claude".to_owned()));
+    assert!(!args.iter().any(|a| a.starts_with("PLANNOTATOR_TUI_FILE=")));
+}
+
+const AGENT_GET_PATH: &str = r#"{"id":"cli:agent:get","result":{"agent":{"agent":"omp","agent_session":{"agent":"omp","kind":"path","source":"herdr:omp","value":"~/.omp/agent/sessions/--w--/2026-08-29T01-00-00-000Z_0199.jsonl"},"pane_id":"w1:p1"},"type":"agent_info"}}"#;
+const AGENT_GET_ID: &str = r#"{"id":"cli:agent:get","result":{"agent":{"agent":"hermes","agent_session":{"agent":"hermes","kind":"id","source":"herdr:hermes","value":"sess_abc123"},"pane_id":"w1:p1"},"type":"agent_info"}}"#;
+const AGENT_GET_PI: &str = r#"{"id":"cli:agent:get","result":{"agent":{"agent":"pi","agent_session":{"agent":"pi","kind":"path","source":"herdr:pi","value":"~/.pi/agent/sessions/--w--/session.jsonl"},"pane_id":"w1:p1"},"type":"agent_info"}}"#;
+
+#[test]
+fn herdrs_exact_agent_identity_needs_no_process_info() {
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_agent: Some("pi".into()),
+        focused_pane_cwd: Some("/w".into()),
+        ..HerdrContext::default()
+    };
+    let launch = plan_last(
+        &env(None, Some(context)),
+        &Config::default(),
+        OpenArgs::default(),
+        Path::new("/"),
+        None,
+        Some(AGENT_GET_PI),
+    )
+    .expect("plans");
+
+    assert_eq!(launch.message, Some(AgentMessage { host: "pi".into(), pid: None }));
+    assert!(!argv(&launch).iter().any(|arg| arg.starts_with("PLANNOTATOR_TUI_MESSAGE_PID=")));
+    assert!(argv(&launch).contains(&"PLANNOTATOR_TUI_HOST=pi".to_owned()));
+}
+
+#[test]
+fn herdrs_agent_session_is_passed_to_the_pane_as_a_path_or_an_id() {
+    assert_eq!(
+        agent_session(AGENT_GET_PATH),
+        Some(AgentSession::Path("~/.omp/agent/sessions/--w--/2026-08-29T01-00-00-000Z_0199.jsonl".into()))
+    );
+    assert_eq!(agent_session(AGENT_GET_ID), Some(AgentSession::Id("sess_abc123".into())));
+    assert_eq!(agent_session(r#"{"result":{"agent":{"agent":"pi"}}}"#), None);
+
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_agent: Some("omp".into()),
+        focused_pane_cwd: Some("/w".into()),
+        ..HerdrContext::default()
+    };
+    let launch = plan_last(
+        &env(None, Some(context.clone())),
+        &Config::default(),
+        OpenArgs::default(),
+        Path::new("/"),
+        None,
+        Some(AGENT_GET_PATH),
+    )
+    .expect("plans");
+    let args = argv(&launch);
+    assert!(args.iter().any(|a| a.starts_with("PLANNOTATOR_TUI_SESSION=~/.omp/agent/sessions/")), "{args:?}");
+    assert!(args.contains(&"PLANNOTATOR_TUI_HOST=omp".to_owned()));
+
+    let launch = plan_last(
+        &env(None, Some(context)),
+        &Config::default(),
+        OpenArgs::default(),
+        Path::new("/"),
+        None,
+        Some(AGENT_GET_ID),
+    )
+    .expect("plans");
+    let args = argv(&launch);
+    assert!(args.contains(&"PLANNOTATOR_TUI_SESSION_ID=sess_abc123".to_owned()), "{args:?}");
+}
+
+#[test]
+fn newest_reaches_the_pane_only_when_last_was_asked_for_it() {
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_agent: Some("claude".into()),
+        focused_pane_cwd: Some("/w".into()),
+        ..HerdrContext::default()
+    };
+    let last = |args| {
+        plan_last(
+            &env(None, Some(context.clone())),
+            &Config::default(),
+            args,
+            Path::new("/"),
+            None,
+            Some(AGENT_GET_PI),
+        )
+        .expect("plans")
+    };
+    let asked = OpenArgs { newest: true, ..OpenArgs::default() };
+    assert!(argv(&last(asked)).contains(&"PLANNOTATOR_TUI_NEWEST=1".to_owned()));
+    assert!(!argv(&last(OpenArgs::default())).iter().any(|a| a.starts_with("PLANNOTATOR_TUI_NEWEST")));
+
+    // `herdr open` has no picker to skip, so a document launch never carries the flag.
+    let open = plan(&env(None, Some(context)), &Config::default(), OpenArgs::default(), Path::new("/"))
+        .expect("plans");
+    assert!(!argv(&open).iter().any(|a| a.starts_with("PLANNOTATOR_TUI_NEWEST")));
+}
+
+#[test]
+fn terminal_review_reads_the_focused_pane_and_delivers_to_its_agent() {
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p1".into()),
+        focused_pane_agent: Some("claude".into()),
+        focused_pane_cwd: Some("/w".into()),
+        ..HerdrContext::default()
+    };
+    let read = TerminalRead { pane: "w1:p1".into(), lines: 200 };
+    let launch = plan_terminal(
+        &env(None, Some(context)),
+        &Config::default(),
+        OpenArgs::default(),
+        Path::new("/"),
+        read,
+    )
+    .expect("plans");
+    let args = argv(&launch);
+    assert!(args.contains(&"PLANNOTATOR_TUI_TERMINAL_PANE=w1:p1".to_owned()), "{args:?}");
+    assert!(args.contains(&"PLANNOTATOR_TUI_TERMINAL_LINES=200".to_owned()), "{args:?}");
+    assert!(args.contains(&"PLANNOTATOR_TUI_DELIVER_TO=w1:p1".to_owned()), "{args:?}");
+    assert!(args.contains(&"PLANNOTATOR_TUI_DELIVER_AGENT=claude".to_owned()), "{args:?}");
+    assert!(!args.iter().any(|a| a.starts_with("PLANNOTATOR_TUI_FILE=")), "a terminal review opens no file");
+    assert!(!args.iter().any(|a| a.starts_with("PLANNOTATOR_TUI_HOST=")), "nor an agent message");
+}
+
+#[test]
+fn terminal_review_of_a_shell_splits_beside_it_and_delivers_nowhere() {
+    let context = HerdrContext {
+        focused_pane_id: Some("w1:p4".into()),
+        focused_pane_cwd: Some("/w".into()),
+        ..HerdrContext::default()
+    };
+    let read = TerminalRead { pane: "w1:p4".into(), lines: 50 };
+    let args = OpenArgs { placement: Some(Placement::Split), ..OpenArgs::default() };
+    let launch =
+        plan_terminal(&env(Some("w9:p9"), Some(context)), &Config::default(), args, Path::new("/"), read)
+            .expect("plans");
+    assert_eq!(launch.deliver, None, "no agent in the pane: the review falls back to the clipboard");
+    let args = argv(&launch);
+    let target = args.iter().position(|a| a == "--target-pane").and_then(|i| args.get(i + 1));
+    assert_eq!(target.map(String::as_str), Some("w1:p4"));
+    assert!(args.contains(&"PLANNOTATOR_TUI_TERMINAL_PANE=w1:p4".to_owned()), "{args:?}");
+}

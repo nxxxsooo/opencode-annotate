@@ -1,0 +1,35 @@
+//! Annotate TUI: the terminal reviewer owned by `opencode-annotate`.
+
+mod app;
+mod archive;
+mod base64;
+mod cli;
+mod config;
+mod delivery;
+mod doc;
+mod export;
+mod file_search;
+mod herdr;
+mod keys;
+mod last;
+mod layout;
+mod srcmap;
+mod store;
+mod theme;
+mod tree;
+mod workspace_paths;
+mod wrap;
+
+fn main() -> std::process::ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match cli::run(&args) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            #[allow(clippy::print_stderr, reason = "the one place errors reach the user")]
+            {
+                eprintln!("annotate-tui: {err:#}");
+            }
+            std::process::ExitCode::FAILURE
+        }
+    }
+}

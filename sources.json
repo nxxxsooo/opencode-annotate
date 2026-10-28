@@ -1,0 +1,54 @@
+{
+  "sources": [
+    {
+      "id": "tui-source-import",
+      "title": "Customized terminal reviewer source snapshot",
+      "kind": "source-code",
+      "owner": "OpenCode Annotate maintainers; original MIT copyright Michael Ramos",
+      "formed_at": "2026-10-28T21:02:12+08:00",
+      "received_at": "2026-10-28",
+      "status": "complete",
+      "source_commit": "7615edea2fd2648ebaeaec50c1c75940408f361b",
+      "sha256": { "tui/LICENSE": "5f1c1dc8da2d0456bd0ae1f6f88d75b807cdba3fe5cff3e71ec31632bd62915c" },
+      "local_files": ["tui/src", "tui/schema", "tui/hosts", "tui/tests", "tui/LICENSE"],
+      "note": "One-time local source import, then owned here. Original source/test/fixture/license bytes and modes were verified before adapting build paths, executable identity and configuration. No live source, Git linkage or upstream synchronization is configured. Private import evidence is retained outside the public repository."
+    },
+    {
+      "id": "tui-ownership-decision",
+      "title": "Own the reviewer inside opencode-annotate",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-10-28",
+      "received_at": "2026-10-28",
+      "status": "partial",
+      "local_files": ["tui/README.md"],
+      "quote": "i dont need nxxxsooo/plannotator-tui.\ni only want tui part of opencode-annotate , a subfolder\n\nno upstream connection whatsoever",
+      "note": "Explicit ownership and integration decision in the current OpenCode conversation. Two consecutive user messages are quoted; their message IDs are not exposed by the harness. Partial describes that provenance gap, not uncertainty about the confirmed instruction."
+    },
+    {
+      "id": "conversation-reference-subfeature",
+      "title": "Integrate conversation references into opencode-annotate",
+      "kind": "chat-message",
+      "owner": "Project maintainer",
+      "formed_at": "2026-10-28",
+      "received_at": "2026-10-28",
+      "status": "partial",
+      "local_files": ["README.md", "CHANGELOG.md"],
+      "quote": "lets do a sub function to acomodate opencode-annotate",
+      "confirmation": "Build this (Recommended)",
+      "note": "Approved two agent tools plus /ref as an integrated feature, verified locally. Message IDs are unavailable in the harness. Partial records that provenance gap. The approved implementation endpoint does not include publishing or changing the daily installation. Official V2 plugin/client APIs were checked against the installed 2.2.0 runtime."
+    },
+    {
+      "id": "tui-retirement-launch",
+      "title": "Remove the redundant reviewer repository and launch Annotate",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-10-28",
+      "received_at": "2026-10-28",
+      "status": "partial",
+      "local_files": ["tui/README.md", "CHANGELOG.md"],
+      "quote": "@mj-project remove unwanted repo and launch this",
+      "note": "Authorizes releasing the integrated project and removing the previously identified nxxxsooo/plannotator-tui repository and local checkout. The subsequent launch-scope choice was Include both (Recommended), covering the TUI and conversation references. Message IDs are not exposed by the harness."
+    }
+  ]
+}

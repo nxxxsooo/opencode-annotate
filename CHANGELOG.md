@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.0 — integrated TUI and conversation references
+
+- Own the terminal reviewer under `tui/`, with its source, tests, native build and
+  platform executables released with this package. OpenCode and AGY resolve that bundled
+  reviewer; builds and CI no longer download or depend on a separate Plannotator fork.
+- Keep theme inheritance, one-key send, input-method handling, Markdown bold-label fixes
+  and existing annotation storage intact. User configuration lives in
+  `~/.config/opencode-annotate/tui.toml`; clear the old launcher `binary` option to use the
+  bundled reviewer, and copy any customized layout from the old configuration once.
+
+- Add `/ref [title or session ID]` and `/ref --all [title]` to attach a bounded,
+  attributed conversation snapshot to the captured session without resuming an idle assistant.
+- Add `annotate.session_search` and `annotate.session_read` server tools with project-scoped
+  title search, explicit cross-project lookup, pagination and long-message continuation.
+- Add a server entrypoint to the existing package. Move its entry from `cli.json` to
+  `opencode.json(c)` to enable both tools and TUI commands; retain existing options.
+- Require OpenCode 2.2.0+. Full-history tools use the managed service's authenticated
+  CLI HTTP API, guarded by a same-process check. `/ref` uses the connected TUI client.
+
 ## 0.9.1 — no steer error after sending
 
 - Send TUI annotations to an idle session as steering input instead of queued input.

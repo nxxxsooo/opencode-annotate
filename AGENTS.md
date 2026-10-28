@@ -1,13 +1,20 @@
 # opencode-annotate
 
-Unofficial OpenCode annotation plugin. Plannotator TUI supplies text review;
-the Annotate HTML-derived browser companion supplies webpage review. This
-repository owns routing, native messaging and captured-session feedback delivery.
+Unofficial OpenCode annotation plugin. The owned Rust reviewer in `tui/` supplies text
+review; the browser companion supplies webpage review. This repository owns both UIs,
+routing, native messaging and captured-session feedback delivery.
 
 - Runtime entry: `tui.ts`; text behavior: `review.mjs`; browser: `browser/`; bridge: `bridge/`; AGY companion: `agy/`.
-- `npm run check` requires the upstream `plannotator-tui` executable.
+- Native reviewer: `tui/`; build with `npm run build:tui`, verify with `npm run check:tui`.
+- Session references: `server.ts` registers tools through `session-tools.mjs`;
+  `reference-command.mjs` owns `/ref`; `session-reference.mjs` bounds and formats history.
+  `server-history.mjs` uses the authenticated CLI API with a same-server-process check.
+- `npm run check` uses the bundled executable. The TUI is ordinary owned source: no
+  submodule, separate fork, upstream download or synchronization workflow.
 - `npm run test:smoke` additionally needs Python 3, tmux and OpenCode; it uses an
   isolated test session and never resumes a model turn.
+- `npm run test:references` verifies server tools and `/ref` in isolated sessions,
+  also without a model turn. References are queued with `resume: false`.
 - Drive keys or mouse only in isolated test sessions, never the user's real sessions.
   Clicking a queued message moves it into the prompt, so a following Enter starts a model
   turn; select text elsewhere and check the prompt holds only the command before Enter.

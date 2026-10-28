@@ -1,0 +1,84 @@
+[workspace]
+resolver = "3"
+members = [".", "schema", "hosts"]
+
+[workspace.package]
+version = "0.10.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+repository = "https://github.com/nxxxsooo/opencode-annotate"
+
+[package]
+name = "annotate-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "The terminal reviewer built and shipped with OpenCode Annotate."
+
+[dependencies]
+plannotator-tui-schema = { path = "schema" }
+plannotator-tui-hosts = { path = "hosts" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+toml.workspace = true
+unicode-width.workspace = true
+time = { version = "0.3", features = ["formatting", "parsing", "local-offset"] }
+pulldown-cmark = { version = "0.13.4", default-features = false }
+ratatui = "0.30"
+tui-markdown = { version = "0.3.9", default-features = false }
+terminal-colorsaurus = "1.0.3"
+
+[dev-dependencies]
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+
+[lints]
+workspace = true
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "3"
+toml = { version = "1", default-features = false, features = ["std", "serde", "parse", "display"] }
+unicode-width = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+panic = "warn"
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false

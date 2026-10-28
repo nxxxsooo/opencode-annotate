@@ -4,7 +4,7 @@ Unofficial OpenCode annotation plugin. Plannotator TUI supplies text review;
 the Annotate HTML-derived browser companion supplies webpage review. This
 repository owns routing, native messaging and captured-session feedback delivery.
 
-- Runtime entry: `tui.ts`; text behavior: `review.mjs`; browser: `browser/`; bridge: `bridge/`.
+- Runtime entry: `tui.ts`; text behavior: `review.mjs`; browser: `browser/`; bridge: `bridge/`; AGY companion: `agy/`.
 - `npm run check` requires the upstream `plannotator-tui` executable.
 - `npm run test:smoke` additionally needs Python 3, tmux and OpenCode; it uses an
   isolated test session and never resumes a model turn.

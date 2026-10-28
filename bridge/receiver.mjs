@@ -24,12 +24,12 @@ export async function listTargets(root = registryRoot()) {
   }
   return results
 }
-export async function createReceiver({ sessionID, title, directory, client, root = registryRoot(), resume = true, onError = () => {} }) {
+export async function createReceiver({ sessionID, title, directory, provider = "opencode", deliver, client, root = registryRoot(), resume = true, onError = () => {} }) {
   await mkdir(root, { recursive: true, mode: 0o700 }); await chmod(root, 0o700)
   const id = randomUUID(), socketPath = path.join(root, `${id}.sock`)
   // macOS sockaddr_un is limited to 104 bytes, including the NUL terminator.
   if (Buffer.byteLength(socketPath) > 103) throw new Error("Annotation socket path is too long")
-  const target = { id, title, directory, sessionID, socket: socketPath, pid: process.pid }
+  const target = { id, title, directory, sessionID, provider, socket: socketPath, pid: process.pid }
   const received = new Map(), sockets = new Set()
   let closed = false
   const server = net.createServer(socket => {
@@ -41,7 +41,10 @@ export async function createReceiver({ sessionID, title, directory, client, root
       handled = true
       try {
         if (closed || message.targetID !== id) throw new Error("Pairing is no longer active")
-        if (message.action === "info") { await client.session.get({ sessionID }); socket.end(encode({ ok: true, target: { id, title, directory } })); return }
+        if (message.action === "info") {
+          if (client) await client.session.get({ sessionID })
+          socket.end(encode({ ok: true, target: { id, title, directory, provider } })); return
+        }
         if (message.action !== "send" || !/^[a-f0-9-]{36}$/.test(message.batchID)) throw new Error("Invalid delivery request")
         validateReview(message.review)
         const digest = createHash("sha256").update(JSON.stringify(message.review)).digest("hex")
@@ -51,6 +54,10 @@ export async function createReceiver({ sessionID, title, directory, client, root
           // Capture immutable input before awaiting; simultaneous retries share one admission promise.
           const promptID = `msg_${createHash("sha256").update(`${id}:${message.batchID}`).digest("hex").slice(0, 32)}`
           const promise = (async () => {
+            if (deliver) {
+              const res = await deliver({ review: message.review, promptID, markdown: markdown(message.review), batchID: message.batchID })
+              return { ok: true, messageID: res?.id || promptID, state: "admitted" }
+            }
             await client.session.get({ sessionID })
             const response = await client.session.prompt({ sessionID, id: promptID, text: markdown(message.review), delivery: "queue", resume })
             return { ok: true, messageID: response?.id || promptID, state: "admitted" }

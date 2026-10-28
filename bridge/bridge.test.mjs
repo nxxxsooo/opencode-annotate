@@ -89,6 +89,38 @@ test("receiver cleanup revokes registration and socket", async t => {
   assert.deepEqual(await listTargets(root), [])
   await assert.rejects(request(receiver.target.socket, {}))
 })
+test("receiver supports custom provider and custom deliver callback", async t => {
+  const root = await fixture(t), delivered = []
+  const receiver = await createReceiver({
+    root,
+    provider: "agy",
+    sessionID: "agy-conv-123",
+    title: "AGY Conversation",
+    directory: "/workspace/agy",
+    deliver: async payload => {
+      delivered.push(payload)
+      return { id: "custom-msg-id" }
+    },
+  })
+  t.after(() => receiver.close())
+  const targets = await listTargets(root)
+  assert.equal(targets.length, 1)
+  assert.equal(targets[0].provider, "agy")
+  assert.equal(targets[0].sessionID, "agy-conv-123")
+
+  const info = await request(receiver.target.socket, { action: "info", targetID: receiver.target.id })
+  assert.equal(info.ok, true)
+  assert.equal(info.target.provider, "agy")
+
+  const batch = { action: "send", targetID: receiver.target.id, batchID: randomUUID(), review: review() }
+  const result = await request(receiver.target.socket, batch)
+  assert.equal(result.ok, true)
+  assert.equal(result.state, "admitted")
+  assert.equal(result.messageID, "custom-msg-id")
+  assert.equal(delivered.length, 1)
+  assert.equal(delivered[0].batchID, batch.batchID)
+  assert.ok(delivered[0].markdown.includes("Explain this paragraph"))
+})
 test("native host uses exact origin allowlist and standard framed replies", async t => {
   const root = await fixture(t)
   const installation = await installBridge({ profileDirectory: path.join(root, "chrome"), installRoot: path.join(root, "host") })

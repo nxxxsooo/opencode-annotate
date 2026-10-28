@@ -61,9 +61,11 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
         },
       },
     } },
-    client: { message: { async list(input) {
+    client: { message: { async list(input, options) {
       assert.equal(input.sessionID, "ses_original")
       assert.equal(input.type, "assistant")
+      // Compressed history pages are slow enough to stall /annotate.
+      assert.equal(options.headers["accept-encoding"], "identity")
       if (changeRoute) route = { type: "session", sessionID: "ses_other" }
       pages++
       if (paginated && pages === 1) {

@@ -1,0 +1,22 @@
+{
+  "agy-annotate": {
+    "SessionStart": [
+      {
+        "command": "node ./hooks.mjs SessionStart",
+        "timeout": 15
+      }
+    ],
+    "PreInvocation": [
+      {
+        "command": "node ./hooks.mjs PreInvocation",
+        "timeout": 15
+      }
+    ],
+    "Stop": [
+      {
+        "command": "node ./hooks.mjs Stop",
+        "timeout": 15
+      }
+    ]
+  }
+}

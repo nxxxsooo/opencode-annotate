@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 — Antigravity (AGY) support and uncompressed history
+
+- Antigravity CLI (AGY) support via `agy-annotate`:
+  - New binary `agy-annotate` providing `status`, `tui`, `web`, and `queue` subcommands.
+  - Native hooks integration (`SessionStart`, `PreInvocation`, `Stop`) delivering annotations directly into active AGY turns without external network services.
+  - Decoupled bridge receiver to register and route between both `opencode` and `agy` session providers.
+  - Browser companion panel badges (`[AGY]` / `[OPENCODE]`) and session chooser hints.
+  - Adapted TUI launcher for AGY with automatic resolution of the local fork (`plannotator-tui-annotate`), full Dracula theme inheritance via `prepareTheme()`, 120-column measure layout, and one-key send (`PLANNOTATOR_TUI_SEND_INTENT`).
+- Request session history uncompressed. OpenCode 2.2.0 compresses API responses at about
+  80 KB/s, so `/annotate`, `/annotate-pick` and `/annotate-selection` waited 10–40 s on a
+  page of long replies before the review opened; the same page now loads in milliseconds.
+
 ## 0.7.0 — one-key send and browser review rounds
 
 ### Text review

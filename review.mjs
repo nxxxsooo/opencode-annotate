@@ -76,6 +76,10 @@ function eligibleReplies(messages) {
   return textMessages(messages).filter(message => !message.progress).map(({ id, text }) => ({ id, text }))
 }
 
+// OpenCode 2.2.0 compresses API responses at roughly 80 KB/s, so a page of long
+// replies took 10–30 s; uncompressed, the same local page arrives in milliseconds.
+const uncompressed = { "accept-encoding": "identity" }
+
 // Walk the session-scoped history newest first; the UI cache holds only a recent page.
 async function* history(client, sessionID, signal) {
   const seen = new Set()
@@ -85,7 +89,7 @@ async function* history(client, sessionID, signal) {
     const page = await client.message.list({
       sessionID, type: "assistant", limit: 50,
       ...(cursor ? { cursor } : { order: "desc" }),
-    }, { signal })
+    }, { signal, headers: uncompressed })
     yield page.data
     cursor = page.cursor?.next
     if (cursor && seen.has(cursor)) throw new Error("Session history returned a repeated page cursor.")

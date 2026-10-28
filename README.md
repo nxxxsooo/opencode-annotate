@@ -69,6 +69,21 @@ Manual configuration, preserving other entries:
 }
 ```
 
+## Antigravity (AGY) support
+
+`opencode-annotate` provides companion support for Google Antigravity CLI (`agy`) via `agy-annotate`:
+
+- **Slash commands `/annotate` & `/annotate-web`**: Built-in AGY skill at `agy/skills/annotate/` handles review directly within active AGY sessions.
+- **Interactive TUI**: Resolves the OpenCode-adapted Plannotator fork with Dracula theme inheritance, 120-column measure layout, and one-key send.
+- **Native Delivery**: Hooks into AGY lifecycle (`SessionStart`, `PreInvocation`, `Stop`) to deliver feedback directly into the conversation turn without network listeners.
+- **CLI Commands**:
+  ```sh
+  npx agy-annotate status     # View active AGY sessions and annotation pairing
+  npx agy-annotate tui        # Review latest assistant reply or markdown file
+  npx agy-annotate web        # Pair browser companion with active AGY session
+  npx agy-annotate queue      # Inspect pending delivered annotations
+  ```
+
 ### Match OpenCode's colors (fork required)
 
 Set `"inheritTheme": true` in the plugin's `options`, alongside `binary`. It requires

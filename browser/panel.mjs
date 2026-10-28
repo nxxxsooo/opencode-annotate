@@ -343,17 +343,21 @@ async function refreshConnection() {
     if (revision !== connectionRevision) return
     if (available?.id !== result.target?.id || destination?.id !== result.destination?.id) notice = null
     targets = result.targets; available = result.target; destination = result.destination; connectionError = result.error || ""
-    const optionsKey = JSON.stringify([targets.map(target => [target.id, target.title, target.directory]), destination?.id, !!available])
+    const optionsKey = JSON.stringify([targets.map(target => [target.id, target.provider, target.title, target.directory]), destination?.id, !!available])
     if (optionsKey !== connectionOptionsKey) {
       connectionOptionsKey = optionsKey
       $("targets").replaceChildren(make("option", "Choose a session…")); $("targets").firstChild.value = ""
       if (destination && !targets.some(target => target.id === destination.id)) {
-        const option = make("option", `${destination.title} — disconnected`); option.value = destination.id; option.disabled = true; $("targets").append(option)
+        const badge = destination.provider ? `[${destination.provider.toUpperCase()}] ` : ""
+        const option = make("option", `${badge}${destination.title} — disconnected`); option.value = destination.id; option.disabled = true; $("targets").append(option)
       }
-      for (const target of targets) { const option = make("option", `${target.title} — ${target.directory}`); option.value = target.id; $("targets").append(option) }
+      for (const target of targets) {
+        const badge = target.provider ? `[${target.provider.toUpperCase()}] ` : ""
+        const option = make("option", `${badge}${target.title} — ${target.directory}`); option.value = target.id; $("targets").append(option)
+      }
       $("targets").value = destination?.id || ""
     }
-    $("connection-hint").textContent = connectionError ? `Session unavailable: ${connectionError}` : !available && destination ? "Reconnect the original OpenCode session, then refresh. Choose another session only to change the destination." : targets.length > 1 && !destination ? "Choose the session that should receive this review." : !available ? "Run /annotate-web in OpenCode, then refresh." : "Sending continues the selected session."
+    $("connection-hint").textContent = connectionError ? `Session unavailable: ${connectionError}` : !available && destination ? "Reconnect the original session, then refresh. Choose another session only to change the destination." : targets.length > 1 && !destination ? "Choose the session that should receive this review." : !available ? "Run /annotate-web in OpenCode or AGY, then refresh." : "Sending continues the selected session."
     if (!destination && targets.length > 1) showSessionOptions(true, false)
   } catch (error) {
     available = null; connectionError = error.message; $("connection-hint").textContent = `Session unavailable: ${error.message}`

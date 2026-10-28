@@ -28,8 +28,9 @@ export function createInputSource(option) {
 }
 
 function resolve(option) {
-  if (option === false || process.platform !== "darwin") return undefined
+  if (option === false) return undefined
   if (typeof option === "string") return option
+  if (process.platform !== "darwin") return undefined
   try {
     accessSync(slashSaver, constants.X_OK)
     return slashSaver

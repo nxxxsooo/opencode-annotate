@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — input-method-safe keys
+## 0.9.0 — input-method-safe keys
 
 - Switch to Slash Saver's ASCII input source while a TUI review is browsed (OpenCode and
   `agy-annotate`) and while an OpenCode permission prompt is open, then restore the previous

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 — no steer error after sending
+
+- Send TUI annotations to an idle session as steering input instead of queued input.
+  OpenCode starts either one at once, but briefly listed the queued message, so an Enter on
+  the empty prompt right after sending tried to steer it and showed "Failed to steer pending
+  prompt" (HTTP 409) although the annotations had arrived. A busy session still queues them.
+
 ## 0.9.0 — input-method-safe keys
 
 - Switch to Slash Saver's ASCII input source while a TUI review is browsed (OpenCode and

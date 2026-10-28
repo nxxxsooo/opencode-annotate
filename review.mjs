@@ -269,8 +269,12 @@ export function createReviewCommand(context, options = {}) {
         keepDraft = archived > 0
         return notice(`Sending cancelled.${retainedArchive}`)
       }
+      // An idle session starts queued input at once, but OpenCode's prompt can still list it
+      // as queued; an empty Enter then tries to steer it and fails with a 409. Steering an
+      // idle session is equivalent and never listed as queued. A busy turn keeps the queue.
+      const busy = (context.data.session.status?.(sessionID) ?? "running") !== "idle"
       await context.client.session.prompt({
-        sessionID, id: promptID, text, delivery: "queue", resume: true,
+        sessionID, id: promptID, text, delivery: busy ? "queue" : "steer", resume: true,
       })
       keepDraft = archived > 0
       notice(`Sent ${count} ${count === 1 ? "annotation" : "annotations"}.${retainedArchive}`, "success")

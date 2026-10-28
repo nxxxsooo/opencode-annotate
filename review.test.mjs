@@ -32,7 +32,7 @@ test("latest reply excludes streaming text, tool commentary, errors, and reasoni
   assert.equal(selectReply([messages.at(-1)]), undefined)
 })
 
-function context({ confirm = true, sendError, changeRoute, paginated, sessionDir } = {}) {
+function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle" } = {}) {
   let route = { type: "session", sessionID: "ses_original" }
   const sent = [], transitions = [], notices = []
   let confirmationCount = 0
@@ -50,6 +50,7 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
     },
     data: { session: {
       get: () => ({ title: "Original session" }),
+      status: id => (assert.equal(id, "ses_original"), status),
       message: {
         async sync(id) {
           assert.equal(id, "ses_original")
@@ -168,10 +169,18 @@ test("real TUI annotations go only to the captured session even after tab change
   assert.match(sent.text, /msg_final/)
   assert.match(sent.text, /Alpha paragraph\./)
   assert.match(sent.text, /请补充具体例子。/)
-  assert.equal(sent.delivery, "queue")
+  assert.equal(sent.delivery, "steer")
   assert.equal(sent.resume, true)
   assert.equal(h.confirmations(), 1)
   assert.deepEqual(await readdir(h.root), [])
+})
+
+test("annotations sent to a busy session wait in the queue", async t => {
+  const h = await harness(t, { status: "running" })
+  await h.command.run()
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent[0].delivery, "queue")
+  assert.equal(h.sent[0].resume, true)
 })
 
 test("sending from the TUI delivers without a second confirmation", async t => {

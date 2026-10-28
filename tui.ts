@@ -1,10 +1,16 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createReviewCommand } from "./review.mjs"
+import { createAsciiHold, createInputSource } from "./input-source.mjs"
 
 export default Plugin.define({
   id: "opencode-annotate",
   setup(context) {
-    const review = createReviewCommand(context)
+    const inputSource = createInputSource(context.options.inputSource)
+    const review = createReviewCommand(context, { inputSource })
+    // Permission prompts answer with single letters, which an input method swallows.
+    const hold = createAsciiHold(inputSource)
+    const stopAsked = context.data.on("permission.asked", event => hold.enter(event.data.id))
+    const stopReplied = context.data.on("permission.replied", event => hold.leave(event.data.requestID))
     // 2.0.22's keymap.layer needs the mounted provider; newer hosts also allow setup().
     const unmount = context.ui.slot({
       append: "app",
@@ -59,6 +65,8 @@ export default Plugin.define({
       },
     })
     return () => {
+      stopAsked()
+      stopReplied()
       review.dispose()
       unmount()
     }

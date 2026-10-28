@@ -110,11 +110,20 @@ async function harness(t, options = {}) {
   t.after(() => rm(root, { recursive: true, force: true }))
   const state = context(options)
   let invocation
+  // Never touch the real input source; record what the review asks for.
+  const switches = []
+  const inputSource = {
+    command: "/fake/SlashSaver",
+    ascii: async () => (switches.push("ascii"), "com.example.pinyin"),
+    select: async id => { switches.push(`select ${id}`) },
+  }
   const command = createReviewCommand(state.ctx, {
     tempRoot: root,
+    inputSource,
     interactive: async input => {
       invocation = input
       assert.deepEqual(state.transitions, ["suspend"])
+      assert.deepEqual(switches, ["ascii"], "the review browses in ASCII")
       assert.equal(await readFile(input.file, "utf8"), options.expectedText ?? "# Review fixture\n\nAlpha paragraph.\n")
       if (options.failTerminal) throw new Error("Terminal child failed")
       if (!options.empty) {
@@ -138,8 +147,16 @@ async function harness(t, options = {}) {
     },
   })
   t.after(command.dispose)
-  return { ...state, command, root, invocation: () => invocation }
+  return { ...state, command, root, switches, invocation: () => invocation }
 }
+
+test("the review browses in ASCII, hands the text source to the TUI and restores it", async t => {
+  const h = await harness(t, { failTerminal: true })
+  await h.command.run()
+  assert.equal(h.invocation().env.PLANNOTATOR_TUI_INPUT_SOURCE, "/fake/SlashSaver")
+  assert.equal(h.invocation().env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE, "com.example.pinyin")
+  assert.deepEqual(h.switches, ["ascii", "select com.example.pinyin"], "restored even after a crash")
+})
 
 test("real TUI annotations go only to the captured session even after tab changes", async t => {
   const h = await harness(t, { changeRoute: true })

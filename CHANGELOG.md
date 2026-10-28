@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — input-method-safe keys
+
+- Switch to Slash Saver's ASCII input source while a TUI review is browsed (OpenCode and
+  `agy-annotate`) and while an OpenCode permission prompt is open, then restore the previous
+  source. A Chinese input method otherwise swallows single-letter keys. The fork switches
+  the comment and edit boxes back to the writing source and binds `Ctrl+E` to edit. New
+  `inputSource` option: `false` disables, a path selects another helper.
+
 ## 0.8.1 — Antigravity (AGY) support and uncompressed history
 
 - Antigravity CLI (AGY) support via `agy-annotate`:

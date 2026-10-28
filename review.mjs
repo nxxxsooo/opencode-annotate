@@ -7,6 +7,7 @@ import { promisify } from "node:util"
 import { createWebReview } from "./web-review.mjs"
 import { wantsBrowser } from "./targets.mjs"
 import { prepareTheme } from "./theme.mjs"
+import { createInputSource } from "./input-source.mjs"
 
 const execute = promisify(execFile)
 const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
@@ -151,6 +152,7 @@ export function createReviewCommand(context, options = {}) {
   const web = createWebReview(context, options.web)
   const binary = options.binary ?? context.options.binary ?? "plannotator-tui"
   const runInteractive = options.interactive ?? interactive
+  const inputSource = options.inputSource ?? createInputSource(context.options.inputSource)
   let active
   let disposed = false
   const notice = (message, variant = "info") => context.ui.toast.show({
@@ -214,11 +216,19 @@ export function createReviewCommand(context, options = {}) {
       const intentPath = path.join(directory, "send-intent")
       env.PLANNOTATOR_TUI_SEND_INTENT = intentPath
       context.ui.dialog.clear()
+      // Review keys are single letters an input method would swallow: browse in ASCII, and
+      // let a capable binary switch back to the user's source while a comment is written.
+      const textSource = await inputSource.ascii()
+      if (inputSource.command && textSource) {
+        env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
+        env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
+      }
       // OpenCode 2.1.1+ suspends and resumes asynchronously; resume forces a full repaint.
       await context.renderer.suspend()
       try {
         await runInteractive({ binary, file, cwd: directory, env, signal: controller.signal })
       } finally {
+        await inputSource.select(textSource)
         await context.renderer.resume()
         context.renderer.requestRender()
       }

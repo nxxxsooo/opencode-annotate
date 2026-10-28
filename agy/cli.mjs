@@ -14,6 +14,7 @@ import { startAgyDaemon } from "./daemon.mjs"
 import { listTargets, registryRoot } from "../bridge/receiver.mjs"
 import { browserTarget } from "../targets.mjs"
 import { prepareTheme } from "../theme.mjs"
+import { createInputSource } from "../input-source.mjs"
 
 const execute = promisify(execFile)
 
@@ -267,6 +268,14 @@ async function cmdTui(targetPath, options) {
     // If binary does not support theme command, fallback to base env
   }
 
+  // Browse in ASCII so an input method cannot swallow review keys; see input-source.mjs.
+  const inputSource = createInputSource()
+  const textSource = await inputSource.ascii()
+  if (inputSource.command && textSource) {
+    env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
+    env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
+  }
+
   try {
     // Run Plannotator interactively
     const child = spawn(binary, [snapshotFile], {
@@ -281,7 +290,7 @@ async function cmdTui(targetPath, options) {
         else resolve(code)
       })
       child.on("error", reject)
-    })
+    }).finally(() => inputSource.select(textSource))
 
     // Export annotations
     const { stdout } = await execute(binary, ["--export", snapshotFile], {

@@ -23,6 +23,7 @@
     "tui.ts",
     "review.mjs",
     "theme.mjs",
+    "input-source.mjs",
     "targets.mjs",
     "web-review.mjs",
     "browser",

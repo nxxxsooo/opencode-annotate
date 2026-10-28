@@ -26,7 +26,7 @@ test("getAdaptedThemeTokens returns valid RGBA palette tokens", () => {
   assert.equal(typeof tokens.text.base.a, "number")
 })
 
-test("prepareTheme succeeds with getAdaptedThemeTokens and adapted binary", async () => {
+test("prepareTheme succeeds with getAdaptedThemeTokens when fork is available", async t => {
   const binary = resolveAdaptedBinary()
   const tempDir = path.join(os.tmpdir(), `agy-cli-test-${Date.now()}`)
   await mkdir(tempDir, { recursive: true })
@@ -39,6 +39,12 @@ test("prepareTheme succeeds with getAdaptedThemeTokens and adapted binary", asyn
     })
     assert.ok(env.PLANNOTATOR_TUI_CONFIG)
     assert.ok(env.PLANNOTATOR_TUI_CONFIG.endsWith("theme.toml"))
+  } catch (err) {
+    if (/color-capable Plannotator fork/i.test(err.message)) {
+      t.skip("Upstream plannotator-tui does not support theme command")
+      return
+    }
+    throw err
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 — Antigravity (AGY) support and uncompressed history
+## 0.8.1 — Antigravity (AGY) support and uncompressed history
 
 - Antigravity CLI (AGY) support via `agy-annotate`:
   - New binary `agy-annotate` providing `status`, `tui`, `web`, and `queue` subcommands.

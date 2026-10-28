@@ -1,0 +1,2 @@
+# Keep Rust source, fixtures and package bytes consistent across native build hosts.
+* text=auto eol=lf

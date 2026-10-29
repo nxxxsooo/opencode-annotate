@@ -38,6 +38,8 @@
     "session-reference.mjs",
     "reference-command.mjs",
     "review.mjs",
+    "auto-review.mjs",
+    "configuration.mjs",
     "theme.mjs",
     "input-source.mjs",
     "targets.mjs",

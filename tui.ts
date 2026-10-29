@@ -2,12 +2,31 @@ import { Plugin } from "@opencode/plugin/tui"
 import { createReviewCommand } from "./review.mjs"
 import { createAsciiHold, createInputSource } from "./input-source.mjs"
 import { createReferenceCommand } from "./reference-command.mjs"
+import { createAutoReview } from "./auto-review.mjs"
+import { watchConfiguration } from "./configuration.mjs"
 
 export default Plugin.define({
   id: "opencode-annotate",
-  setup(context) {
+  async setup(context) {
+    const host = context
+    let options = host.options
+    context = { ...host, get options() { return options } }
+    let restartAutoReview: (() => void) | undefined
+    let stopAutoReview = () => {}
+    const configuration = watchConfiguration(context, updated => {
+      const changed = options.autoAnnotate !== updated.autoAnnotate
+        || options.autoAnnotateThreshold !== updated.autoAnnotateThreshold
+      options = updated
+      if (changed) restartAutoReview?.()
+    })
+    await configuration.ready
     const inputSource = createInputSource(context.options.inputSource)
     const review = createReviewCommand(context, { inputSource })
+    restartAutoReview = () => {
+      stopAutoReview()
+      stopAutoReview = createAutoReview(context, review)
+    }
+    restartAutoReview()
     const reference = createReferenceCommand(context)
     // Permission prompts answer with single letters, which an input method swallows.
     const hold = createAsciiHold(inputSource)
@@ -77,6 +96,8 @@ export default Plugin.define({
     return () => {
       stopAsked()
       stopReplied()
+      configuration.dispose()
+      stopAutoReview()
       review.dispose()
       reference.dispose()
       unmount()

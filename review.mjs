@@ -170,8 +170,9 @@ export function createReviewCommand(context, options = {}) {
   // run, so keep the last one per session.
   context.renderer.on("selection", remember)
 
-  async function start(resolve) {
+  async function start(resolve, automatic) {
     if (disposed) return
+    if (automatic && (active || !automatic())) return
     if (active) return notice("An annotation is already in progress.")
     // Capture before the first await: changing tabs must never redirect a review.
     const route = context.ui.router.current()
@@ -185,6 +186,7 @@ export function createReviewCommand(context, options = {}) {
     try {
       const source = await resolve({ sessionID, signal: controller.signal })
       if (controller.signal.aborted || !source) return
+      if (automatic && !automatic()) return
 
       directory = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "opencode-annotate-"))
       keepDraft = true
@@ -216,6 +218,10 @@ export function createReviewCommand(context, options = {}) {
       // The reviewer writes "send" here when q or Ctrl+S quits with notes.
       const intentPath = path.join(directory, "send-intent")
       env.PLANNOTATOR_TUI_SEND_INTENT = intentPath
+      if (automatic && !automatic()) {
+        keepDraft = false
+        return
+      }
       context.ui.dialog.clear()
       // Review keys are single letters an input method would swallow: browse in ASCII, and
       // let a capable binary switch back to the user's source while a comment is written.
@@ -224,9 +230,18 @@ export function createReviewCommand(context, options = {}) {
         env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
         env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
       }
+      if (automatic && !automatic()) {
+        await inputSource.select(textSource)
+        keepDraft = false
+        return
+      }
       // OpenCode 2.1.1+ suspends and resumes asynchronously; resume forces a full repaint.
       await context.renderer.suspend()
       try {
+        if (automatic && !automatic()) {
+          keepDraft = false
+          return
+        }
         await runInteractive({ binary, file, cwd: directory, env, signal: controller.signal })
       } finally {
         await inputSource.select(textSource)
@@ -307,6 +322,17 @@ export function createReviewCommand(context, options = {}) {
     return reply
   })
 
+  const auto = (sessionID, messageID, threshold, current = () => true) => start(async ({ signal }) => {
+    const message = await context.client.session.message.get({ sessionID, messageID }, { signal, headers: uncompressed })
+    const source = selectReply([message])
+    // Count Unicode characters, including Markdown, rather than bytes or UTF-16 units.
+    if (source && [...source.text.trim()].length > threshold) return source
+  }, () => {
+    const route = context.ui.router.current()
+    return current() && route.type === "session" && route.sessionID === sessionID
+      && context.data.session.status(sessionID) === "idle"
+  })
+
   const pick = () => start(async ({ sessionID, signal }) => {
     const texts = await recentTexts(context.client, sessionID, signal, 30)
     if (!texts.length) {
@@ -343,7 +369,7 @@ export function createReviewCommand(context, options = {}) {
   })
 
   return {
-    run, pick, selection: annotateSelection, web: webReview,
+    run, auto, pick, selection: annotateSelection, web: webReview,
     dispose() {
       context.renderer.off("selection", remember)
       disposed = true

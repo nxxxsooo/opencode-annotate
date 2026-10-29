@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in automatic review of long replies through `autoAnnotate` and
+  `autoAnnotateThreshold` in the plugin's JSONC options (default: off, 2,000 characters).
+  Open the exact completed reply once after a successful turn in the active session;
+  keep feedback sending explicit and skip background, failed and interrupted turns.
+- Read plugin options through a location-scoped RPC so OpenCode 2.2's server-loaded
+  TUI receives its JSONC settings, including updates to the auto-annotation switch.
+
 ## 0.10.0 — integrated TUI and conversation references
 
 - Own the terminal reviewer under `tui/`, with its source, tests, native build and

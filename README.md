@@ -110,19 +110,10 @@ transcript index or database access is needed.
 Permission actions are `annotate_session_search` (project ID, or `*` for cross-project
 search) and `annotate_session_read` (source session ID).
 
-### Reference feature status
+### Reference verification
 
-As verified on **2026-10-28**, this feature is implemented in the local worktree and
-remains unreleased. The daily installation was not changed or validated by this work.
-
-| Decision | Basis |
-| --- | --- |
-| Integrate two agent tools and `/ref` into this package; verify locally | 2026-10-28 approval, `conversation-reference-subfeature` in [sources.json](sources.json) |
-
-Verification completed in the implementation session: `npm run check` passed all 58
-tests and the package dry-run; the existing `npm run test:smoke` passed; and
-`npm run test:references` passed against source and an extracted npm package. The
-reference checks cover pre-compaction history, API responses larger than 256 KiB,
+`npm run test:references` exercises the server tools and `/ref` against source or an
+extracted npm package. The checks cover pre-compaction history, API responses larger than 256 KiB,
 pagination, long-message continuation, attachment and cancellation without a model
 turn. Unit checks also cover tab changes, permission denial and private-file cleanup.
 
@@ -131,9 +122,7 @@ tools, and `session-reference.mjs` for bounded history. `server-history.mjs` cap
 CLI output in private temporary files to avoid v2.2.0 pipe truncation, then removes
 them. Regression entrypoints are `session-reference.test.mjs`,
 `server-history.test.mjs` and `tests/references-smoke.py`; release ownership remains in
-[docs/releasing.md](docs/releasing.md). The working tree also contains concurrent
-owned-reviewer changes under `tui/`; this feature's verification is not a release
-receipt for those changes.
+[docs/releasing.md](docs/releasing.md).
 
 ## Antigravity (AGY) support
 
@@ -323,6 +312,40 @@ opencode plugin remove @nxxxsooo/opencode-annotate@latest
 ```
 
 ## Configuration
+
+### Automatically review long replies
+
+Enable auto-annotation in the plugin entry in **`opencode.jsonc`** (or `opencode.json`):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "@nxxxsooo/opencode-annotate@latest",
+      "options": {
+        "autoAnnotate": true,
+        "autoAnnotateThreshold": 2000, // Open when the reply exceeds this many characters.
+      },
+    },
+  ],
+}
+```
+
+Add these options to your existing entry, keeping any other options. Auto-annotation
+is **off by default**; set `autoAnnotate` to `false` to disable it. The threshold defaults
+to **2,000 characters** and accepts a non-negative integer; `0` reviews every non-empty
+reply. It counts Unicode characters in the trimmed reply text, including Markdown and
+code, excluding reasoning and tool output. A reply exactly at the threshold does not open.
+
+After a successful turn, a new qualifying reply in the active session opens the normal
+reviewer once. Progress updates, failed or interrupted turns, historical replies and
+background sessions do not trigger it. A reply is skipped if another review is open,
+you switch sessions before it opens, or a new turn starts. Dismissing the reviewer or
+reloading the plugin does not reopen that reply. Sending remains your explicit action.
+OpenCode reloads saved configuration automatically; use `/reload` if needed.
+
+### Reviewer binary and layout
 
 The bundled reviewer is selected automatically. Use `binary` only to override it with
 another locally built Annotate TUI executable:

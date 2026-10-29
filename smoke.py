@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 import shlex
 import socket as unix_socket
 import struct
@@ -13,6 +14,7 @@ import time
 PLUGIN = Path(__file__).resolve().parent
 ENTRYPOINT = Path(os.environ.get("ANNOTATE_TUI_ENTRY", str(PLUGIN / "tui.ts"))).resolve().as_uri()
 BINARY_OPTIONS = {"binary": os.environ["ANNOTATE_TUI_BINARY"]} if os.environ.get("ANNOTATE_TUI_BINARY") else {}
+BINARY_OPTIONS.update({"autoAnnotate": True, "autoAnnotateThreshold": 40, "inputSource": False})
 INHERIT_THEME = os.environ.get("ANNOTATE_INHERIT_THEME") == "1"
 THEME_MODE = os.environ.get("ANNOTATE_THEME_MODE", "dark")
 if INHERIT_THEME:
@@ -26,6 +28,7 @@ TMP.mkdir(exist_ok=True)
 root = Path(tempfile.mkdtemp(prefix="annotate-last-smoke-", dir=TMP)).resolve()
 socket = f"annotate-last-smoke-{os.getpid()}"
 session = None
+event_number = 0
 
 
 def api(method, route, data=None):
@@ -63,6 +66,51 @@ def literal(text):
 
 def keys(*items):
     tmux("send-keys", "-t", "check:0.0", *items)
+
+
+def wait_event(number):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        receipt = root / "event-done"
+        if receipt.exists() and receipt.read_text() == str(number):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"Fixture event {number} did not complete; evidence: {root}")
+
+
+def event(kind, data, wait_done=True):
+    global event_number
+    event_number += 1
+    payload = {"number": event_number, "event": {
+        "id": f"evt_smoke_{event_number}", "created": time.time() * 1000,
+        "type": kind, "data": {"sessionID": session, **data},
+    }}
+    pending = root / "event-pending"
+    pending.write_text(json.dumps(payload))
+    pending.replace(root / "event.json")
+    if wait_done:
+        wait_event(event_number)
+    return event_number
+
+
+def launches():
+    counter = root / "review-launches"
+    return len(counter.read_text().splitlines()) if counter.exists() else 0
+
+
+def configure_auto(enabled):
+    config = root / "opencode.jsonc"
+    BINARY_OPTIONS["autoAnnotate"] = enabled
+    config.write_text('// Auto-annotation hot reload.\n' + json.dumps({
+        "plugins": [{"package": str(root / "fixture"), "options": BINARY_OPTIONS}],
+    }))
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        loaded = root / "configuration-loaded.json"
+        if loaded.exists() and json.loads(loaded.read_text()).get("autoAnnotate") is enabled:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"autoAnnotate={enabled} was not reloaded; evidence: {root}")
 
 
 def check_colors(label, roles):
@@ -116,15 +164,38 @@ try:
     fixture = root / "fixture"
     fixture.mkdir()
     (fixture / "package.json").write_text(json.dumps({
-        "name": "annotate-last-smoke", "type": "module", "exports": {"./tui": "./tui.ts"},
+        "name": "annotate-last-smoke", "type": "module", "exports": {".": "./server.ts", "./tui": "./tui.ts"},
+    }))
+    (fixture / "server.ts").write_text(f'''import {{ registerConfiguration }} from {json.dumps((Path(unquote(urlparse(ENTRYPOINT).path)).parent / "configuration.mjs").as_uri())}
+export default {{ id: "test.annotate-last", async setup(ctx) {{ await registerConfiguration(ctx) }} }}
+''')
+    (root / "opencode.jsonc").write_text('// Auto-annotation options load through real JSONC configuration.\n' + json.dumps({
+        "plugins": [{"package": str(fixture), "options": BINARY_OPTIONS}],
     }))
     ready = root / "plugin-ready"
     (fixture / "tui.ts").write_text(f'''import plugin from {json.dumps(ENTRYPOINT)}
-import {{ writeFileSync }} from "node:fs"
+import {{ appendFileSync, readFileSync, watchFile, unwatchFile, writeFileSync }} from "node:fs"
 export default {{
   ...plugin,
   id: "test.annotate-last",
-  setup(ctx) {{
+  async setup(ctx) {{
+    const handlers = new Map()
+    const eventFile = {json.dumps(str(root / "event.json"))}
+    let processed = 0
+    // Deliver schema-shaped completion events without starting a model turn. Message
+    // lookup, plugin options, renderer, reviewer and feedback delivery remain real.
+    watchFile(eventFile, {{ interval: 50 }}, async () => {{
+      let payload
+      try {{ payload = JSON.parse(readFileSync(eventFile, "utf8")) }} catch {{ return }}
+      if (payload.number <= processed) return
+      processed = payload.number
+      appendFileSync({json.dumps(str(root / "events.jsonl"))}, JSON.stringify({{
+        number: payload.number, type: payload.event.type, handlers: handlers.get(payload.event.type)?.size ?? 0,
+        route: ctx.ui.router.current(), status: ctx.data.session.status(payload.event.data.sessionID), options: ctx.options,
+      }}) + "\\n")
+      for (const handler of handlers.get(payload.event.type) ?? []) await handler(payload.event)
+      writeFileSync({json.dumps(str(root / "event-done"))}, String(payload.number))
+    }})
     const rgb = color => [color.r, color.g, color.b].map(value => Math.round(value * 255))
     writeFileSync({json.dumps(str(root / "host-colors.json"))}, JSON.stringify({{
       background: rgb(ctx.theme.background.base), foreground: rgb(ctx.theme.text.base),
@@ -133,8 +204,26 @@ export default {{
       selection: rgb(ctx.theme.background.action.primary.focused),
       selectionForeground: rgb(ctx.themeMode === "light" ? ctx.theme.text.base : ctx.theme.text.action.primary.focused),
     }}))
-    return plugin.setup({{
+    const dispose = await plugin.setup({{
       ...ctx,
+      ui: {{ ...ctx.ui, toast: {{ show(notice) {{
+        appendFileSync({json.dumps(str(root / "notices.jsonl"))}, JSON.stringify(notice) + "\\n")
+        ctx.ui.toast.show(notice)
+      }} }} }},
+      data: {{ ...ctx.data, on(type, handler) {{
+        if (!handlers.has(type)) handlers.set(type, new Set())
+        handlers.get(type).add(handler)
+        const stop = ctx.data.on(type, handler)
+        return () => {{ handlers.get(type).delete(handler); stop() }}
+      }} }},
+      renderer: new Proxy(ctx.renderer, {{ get(target, key) {{
+        if (key === "suspend") return async () => {{
+          appendFileSync({json.dumps(str(root / "review-launches"))}, "launch\\n")
+          return target.suspend()
+        }}
+        const value = Reflect.get(target, key)
+        return typeof value === "function" ? value.bind(target) : value
+      }} }}),
       keymap: {{ ...ctx.keymap, layer(factory) {{
         return ctx.keymap.layer(() => {{
           const layer = factory()
@@ -143,7 +232,15 @@ export default {{
         }})
       }} }},
       client: {{ ...ctx.client,
-        message: {{ async list() {{ return {{ data: [{{
+        rpc(definition) {{
+          const rpc = ctx.client.rpc(definition)
+          return {{ ...rpc, async get(...args) {{
+            const result = await rpc.get(...args)
+            writeFileSync({json.dumps(str(root / "configuration-loaded.json"))}, JSON.stringify(result))
+            return result
+          }} }}
+        }},
+        message: {{ ...ctx.client.message, async list() {{ return {{ data: [{{
           id: "msg_smoke_fixture", type: "assistant", agent: "build",
           model: {{ providerID: "fixture", id: "fixture" }},
           time: {{ created: 2, completed: 3 }}, finish: "stop",
@@ -163,14 +260,33 @@ export default {{
         prompt: (input) => ctx.client.session.prompt({{ ...input, resume: false }}),
       }} }},
     }})
+    return () => {{ unwatchFile(eventFile); dispose() }}
   }},
 }}
 ''')
-    session = api("post", "/api/session", {
+    info = api("post", "/api/session", {
         "title": "Annotate-last isolated smoke test", "location": {"directory": str(root)},
-    })["data"]["id"]
+    })["data"]
+    session = info["id"]
+    api("delete", f"/api/session/{session}")
+    auto_text = "# Automatic exact reply fixture\n\nAlpha paragraph for automatic review.\n"
+    messages = [
+        {"id": message_id, "type": "assistant", "agent": "build",
+         "model": {"providerID": "fixture", "id": "fixture"}, "finish": finish,
+         "time": {"created": index, "completed": index + 1}, "content": [{"type": "text", "text": text}]}
+        for index, (message_id, text, finish) in enumerate([
+            ("msg_smoke_auto", auto_text, "stop"),
+            ("msg_smoke_short", "Short reply.", "stop"),
+            ("msg_smoke_auto_progress", "Long progress update that must never open the automatic reviewer.", "tool-calls"),
+            ("msg_smoke_auto_disabled", auto_text, "stop"),
+            ("msg_smoke_auto_empty", auto_text, "stop"),
+        ])
+    ]
+    api("post", "/api/experimental/session/import", {
+        "info": info, "location": {"directory": str(root)}, "messages": messages,
+    })
     inline = json.dumps({
-        "plugins": [{"package": str(fixture), "options": BINARY_OPTIONS}], "animations": False,
+        "plugins": ["-opencode-annotate"], "animations": False,
         "theme": {"name": "dracula", "mode": THEME_MODE},
         "debug": {"devtools": False}, "tabs": {"mode": "off"},
     })
@@ -185,6 +301,46 @@ export default {{
             (root / "plugin-ready-failed.txt").write_text(screen())
             raise AssertionError("The isolated plugin keymap did not mount")
         time.sleep(0.05)
+
+    # Imported history alone must not open a review. Short replies and progress updates
+    # stay closed; a successful new completion opens the exact reply via the real API.
+    assert launches() == 0
+    for message_id, finish in [("msg_smoke_short", "stop"), ("msg_smoke_auto_progress", "tool-calls")]:
+        event("session.step.ended", {"assistantMessageID": message_id, "finish": finish})
+        event("session.execution.succeeded", {})
+        assert launches() == 0
+    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto", "finish": "stop"})
+    assert launches() == 0, "A completed text block is not yet a completed turn"
+    completion = event("session.execution.succeeded", {}, wait_done=False)
+    wait("last-reply.md · 0 annotations", "auto-open")
+    wait("Automatic exact reply fixture", "auto-exact-content")
+    annotate("SMOKE automatic feedback", "auto-note")
+    keys("q")
+    wait("Sent 1 annotation", "auto-sent")
+    wait_event(completion)
+    automatic_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
+    assert "SMOKE automatic feedback" in automatic_inbox and "msg_smoke_auto" in automatic_inbox
+    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto", "finish": "stop"})
+    event("session.execution.succeeded", {})
+    assert launches() == 1, "A completed reply must open only once"
+    assert len(api("get", f"/api/session/{session}/message")["data"]) == len(messages), "No model turn should run"
+
+    configure_auto(False)
+    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto_disabled", "finish": "stop"})
+    event("session.execution.succeeded", {})
+    assert launches() == 1, "Saving autoAnnotate:false must disable automatic reviews"
+    configure_auto(True)
+    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto", "finish": "stop"})
+    event("session.execution.succeeded", {})
+    assert launches() == 1, "Config reload must preserve deduplication"
+    before_empty = api("get", f"/api/session/{session}/inbox")
+    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto_empty", "finish": "stop"})
+    completion = event("session.execution.succeeded", {}, wait_done=False)
+    wait("last-reply.md · 0 annotations", "auto-reenabled")
+    keys("q")
+    wait_event(completion)
+    assert launches() == 2
+    assert api("get", f"/api/session/{session}/inbox") == before_empty
 
     open_review("review-open")
     if INHERIT_THEME:
@@ -306,8 +462,11 @@ export default {{
     web_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
     assert "SMOKE browser exact-session feedback" in web_inbox
     assert receipt["messageID"] in web_inbox
+    assert len(api("get", f"/api/session/{session}/message")["data"]) == len(messages), "No model turn should run"
 
-    print(json.dumps({"passed": ["real TUI launch", "create annotation", "terminal restore",
+    print(json.dumps({"passed": ["JSONC auto-annotation options", "automatic exact-reply lookup",
+                                  "short/progress suppression", "automatic trigger deduplication", "JSONC toggle hot reload",
+                                  "real TUI launch", "create annotation", "terminal restore",
                                   "confirmed API delivery", "empty review", "cancelled review",
                                   "document path arguments", "document API delivery", "last fixed to latest",
                                    "picker with progress updates", "browser pairing", "browser API delivery", "retry deduplication"],

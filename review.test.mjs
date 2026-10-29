@@ -32,11 +32,12 @@ test("latest reply excludes streaming text, tool commentary, errors, and reasoni
   assert.equal(selectReply([messages.at(-1)]), undefined)
 })
 
-function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle" } = {}) {
+function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message } = {}) {
   let route = { type: "session", sessionID: "ses_original" }
   const sent = [], transitions = [], notices = []
   let confirmationCount = 0
   let pages = 0
+  let gets = 0
   const ctx = {
     options: {}, themeMode: "dark", location: { directory: "/wrong-client-directory" },
     renderer: {
@@ -79,6 +80,14 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       }
       return { data: [reply("msg_final", "# Review fixture\n\nAlpha paragraph.\n")], cursor: {} }
     } }, session: {
+      message: { async get(input, options) {
+        assert.equal(input.sessionID, "ses_original")
+        assert.equal(input.messageID, "msg_exact")
+        assert.equal(options.headers["accept-encoding"], "identity")
+        gets++
+        if (changeRoute) route = { type: "session", sessionID: "ses_other" }
+        return message ?? reply("msg_exact", "# Review fixture\n\nAlpha paragraph.\n")
+      } },
       async get(input) {
         assert.equal(input.sessionID, "ses_original")
         if (changeRoute) route = { type: "session", sessionID: "ses_other" }
@@ -102,7 +111,10 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       },
     },
   }
-  return { ctx, sent, transitions, notices, confirmations: () => confirmationCount, pages: () => pages }
+  return {
+    ctx, sent, transitions, notices, confirmations: () => confirmationCount, pages: () => pages, gets: () => gets,
+    setStatus: value => { status = value },
+  }
 }
 
 async function harness(t, options = {}) {
@@ -181,6 +193,91 @@ test("annotations sent to a busy session wait in the queue", async t => {
   assert.equal(h.sent.length, 1)
   assert.equal(h.sent[0].delivery, "queue")
   assert.equal(h.sent[0].resume, true)
+})
+
+test("automatic review opens the exact completed reply and preserves confirmed delivery", async t => {
+  const h = await harness(t, { sendIntent: true })
+  await h.command.auto("ses_original", "msg_exact", 10)
+  assert.equal(h.gets(), 1)
+  assert.equal(h.pages(), 0, "must not substitute the latest historical reply")
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent[0].sessionID, "ses_original")
+  assert.match(h.sent[0].text, /your reply msg_exact\./)
+  assert.equal(h.sent[0].delivery, "steer")
+  assert.deepEqual(h.transitions, ["suspend", "resume", "render"])
+})
+
+test("auto-review threshold is strictly greater and counts Unicode characters, not bytes", async t => {
+  for (const [text, threshold, opens] of [
+    ["中文🙂", 4, false], ["中文🙂", 3, false], ["中文🙂", 2, true],
+    [" \n中文🙂\n ", 3, false], ["", 0, false], ["x", 0, true],
+  ]) {
+    const h = await harness(t, { message: reply("msg_exact", text), expectedText: text, empty: true })
+    await h.command.auto("ses_original", "msg_exact", threshold)
+    assert.equal(Boolean(h.invocation()), opens, JSON.stringify({ text, threshold }))
+    assert.deepEqual(h.sent, [], "opening or dismissing an automatic review submits nothing")
+  }
+})
+
+test("auto-review rejects unfinished, progress, failed and reasoning-only messages", async t => {
+  for (const extra of [
+    { time: { created: 1 } }, { finish: "tool-calls" }, { finish: "error" },
+    { finish: "content-filter" }, { error: {} },
+    { content: [{ type: "reasoning", text: "private reasoning" }] },
+  ]) {
+    const h = await harness(t, { message: reply("msg_exact", "long text", extra) })
+    await h.command.auto("ses_original", "msg_exact", 0)
+    assert.deepEqual(h.transitions, [])
+    assert.deepEqual(h.sent, [])
+  }
+})
+
+test("auto-review skips background sessions, a busy turn, and a tab change during loading", async t => {
+  for (const options of [{ target: "ses_background" }, { status: "running" }, { changeRoute: true }]) {
+    const h = await harness(t, options)
+    await h.command.auto(options.target ?? "ses_original", "msg_exact", 0)
+    assert.equal(h.gets(), options.changeRoute ? 1 : 0)
+    assert.deepEqual(h.transitions, [])
+    assert.deepEqual(h.notices, [], "automatic skips should be quiet")
+  }
+})
+
+test("automatic loading is cancelled when another turn starts or the plugin is disposed", async t => {
+  for (const dispose of [false, true]) {
+    const h = await harness(t)
+    let entered, release
+    const loading = new Promise(resolve => { entered = resolve })
+    const loaded = new Promise(resolve => { release = resolve })
+    h.ctx.client.session.message.get = async () => {
+      entered()
+      await loaded
+      return reply("msg_exact", "long text")
+    }
+    const automatic = h.command.auto("ses_original", "msg_exact", 0)
+    await loading
+    if (dispose) await h.command.dispose()
+    else h.setStatus("running")
+    release()
+    await automatic
+    assert.deepEqual(h.transitions, [])
+    assert.deepEqual(h.sent, [])
+    assert.deepEqual(await readdir(h.root), [])
+  }
+})
+
+test("an automatic trigger never overlaps an existing review", async t => {
+  const h = await harness(t, { empty: true })
+  let release
+  const loaded = new Promise(resolve => { release = resolve })
+  const list = h.ctx.client.message.list
+  h.ctx.client.message.list = async (...args) => { await loaded; return list(...args) }
+  const manual = h.command.run()
+  await h.command.auto("ses_original", "msg_exact", 0)
+  assert.equal(h.gets(), 0)
+  release()
+  await manual
+  assert.deepEqual(h.transitions, ["suspend", "resume", "render"])
+  assert.deepEqual(h.notices.map(n => n.message), ["No annotations. Returned to the session."])
 })
 
 test("sending from the TUI delivers without a second confirmation", async t => {

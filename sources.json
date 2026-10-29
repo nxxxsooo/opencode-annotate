@@ -48,7 +48,7 @@
       "status": "partial",
       "local_files": ["tui/README.md", "CHANGELOG.md"],
       "quote": "@mj-project remove unwanted repo and launch this",
-      "note": "Authorizes releasing the integrated project and removing the previously identified nxxxsooo/plannotator-tui repository and local checkout. The subsequent launch-scope choice was Include both (Recommended), covering the TUI and conversation references. Message IDs are not exposed by the harness."
+      "note": "Authorizes releasing the integrated project and removing the previously identified nxxxsooo/plannotator-tui repository and local checkout. The subsequent launch-scope choice was Include both (Recommended), covering the TUI and conversation references. Both removals were verified on 2026-10-29 after 0.10.0 publication; recovery history is retained privately. Message IDs are not exposed by the harness."
     }
   ]
 }

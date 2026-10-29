@@ -67,10 +67,9 @@ Import provenance and the ownership decision are recorded in [sources.json](../s
 |---|---|---|
 | 2026-10-28 | Own the terminal reviewer inside `opencode-annotate/tui/`; build and distribute it with the plugin. | `tui-ownership-decision` in the source register. |
 
-Current state: source, package-relative build and both adapter defaults are integrated.
-The macOS arm64 executable passes the Rust workspace, adapter tests, package extraction
-and annotation/export round trip. Isolated OpenCode reviews passed with dark and light
-theme inheritance, one-key sends, cancellation and captured-session delivery; light mode
-also ran from the extracted npm archive. Local settings now use the bundled executable.
-The cross-platform CI workflow is configured and linted; its first remote run and public
-publication follow the repository's [release process](../docs/releasing.md).
+The integrated reviewer first shipped in **0.10.0**, with successful native CI on all
+five supported platforms and verified npm executable bytes. Isolated OpenCode reviews
+passed with theme inheritance, one-key sends, cancellation and captured-session delivery.
+The redundant reviewer repository and local checkout were removed on 2026-10-29 after
+publication verification; recoverable history is retained privately. `tui/` is the sole
+maintained source. Releases follow the repository's [release process](../docs/releasing.md).

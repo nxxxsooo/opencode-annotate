@@ -49,6 +49,18 @@
       "local_files": ["tui/README.md", "CHANGELOG.md"],
       "quote": "@mj-project remove unwanted repo and launch this",
       "note": "Authorizes releasing the integrated project and removing the previously identified nxxxsooo/plannotator-tui repository and local checkout. The subsequent launch-scope choice was Include both (Recommended), covering the TUI and conversation references. Both removals were verified on 2026-10-29 after 0.10.0 publication; recovery history is retained privately. Message IDs are not exposed by the harness."
+    },
+    {
+      "id": "auto-review-release-series",
+      "title": "Include automatic review in the 0.10 release series",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-10-29",
+      "received_at": "2026-10-29",
+      "status": "partial",
+      "local_files": ["docs/releasing.md", "CHANGELOG.md"],
+      "quote": "include the auto function in 10",
+      "note": "The visible main session interpreted this as the 0.10 series and prepared 0.10.1, preserving already-published 0.10.0. The automatic-review handoff commit is 539493069c38f732bbce7f70a1446d0344a28df7. The later Full Save records 0.10.1 as CI-verified but not tagged/published. Message ID is not exposed; partial records that provenance gap."
     }
   ]
 }

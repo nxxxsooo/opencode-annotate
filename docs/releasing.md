@@ -1,5 +1,30 @@
 # Releasing
 
+## Recovery snapshot — 2026-10-29
+
+| Surface | Verified state |
+|---|---|
+| Public release | `v0.10.0` remains at `67cd250bef6139991f947331f0e5117f12f1e95e`; npm `latest` is `0.10.0`, with the matching published GitHub Release. |
+| Published contents | Owned TUI and conversation references. All five native executable bytes matched the npm archive; OIDC provenance was verified. Automatic review is **not** in this release. |
+| Automatic-review target | `0.10.1`, release commit `9b31d75b10330fc7e23657285146f0e20e31d533`, containing feature commit `539493069c38f732bbce7f70a1446d0344a28df7`. |
+| Target verification | [CI 40804394418](https://github.com/nxxxsooo/opencode-annotate/actions/runs/40804394418) passed on the exact target commit. Local evidence includes 74 Node tests, Rust checks, JSONC hot reload/automatic exact-reply smoke, and conversation-reference smoke. |
+| Delivery boundary | `v0.10.1` has not been created or published, and the daily installation still loads the local checkout. The intermediate `0.11.0` preparation was superseded before any tag or publication. |
+| Retirement | The separate personal reviewer repository returns 404. Its former checkout and custom launchers were removed; `tui/` is the maintained source and retains the original MIT notice. |
+
+The user's release-series direction is recorded as `auto-review-release-series` in
+[`sources.json`](../sources.json). Published tags and npm versions must remain immutable.
+The verified release anchor above is distinct from later documentation-only Save commits.
+
+Private recovery material lives under `.local/retired/20261029-plannotator-tui/` (verified
+Git bundle, retained local-only evidence and deletion receipt). `.local/releases/` contains
+the version-specific status records and prepared `0.10.1-notes.md`.
+
+The installed options to preserve are `inheritTheme: true`, `autoAnnotate: true`, and
+`autoAnnotateThreshold: 2000` in the single `opencode.json(c)` plugin entry. There is no
+duplicate CLI entry. Public automatic-review defaults are off and 2,000 Unicode characters,
+with a strict greater-than threshold. A future published-package install must carry these
+local options over rather than reset them.
+
 ## Package identity
 
 OpenCode Annotate publishes as `@nxxxsooo/opencode-annotate` from
@@ -7,10 +32,12 @@ OpenCode Annotate publishes as `@nxxxsooo/opencode-annotate` from
 `opencode-plannotator-tui`, which is now deprecated with a pointer to the new name.
 The unscoped npm name `opencode-annotate` belongs to an unrelated package.
 
-To switch a maintainer installation from a local checkout back to npm, run
-`node scripts/install-plugin.mjs --undo <cli-before.json>` with the private backup under
-`.local/migration/`, or replace the checkout path in `cli.json` with
-`@nxxxsooo/opencode-annotate@latest`. Reopen the terminal client.
+To switch the current server-plus-TUI installation from a checkout back to npm, replace
+only its `package` value in the existing `opencode.json(c)` entry with
+`@nxxxsooo/opencode-annotate@latest`, preserving its options. Update that package and verify
+it with `opencode plugin list`; run `/reload` if necessary. Keep one entry, without a
+duplicate in `cli.json`. The older `scripts/install-plugin.mjs` helper handles TUI-only
+CLI entries and is not the migration path for this combined package.
 
 The npm package, Git tag and GitHub Release use the same semver. The maintained
 source is this repository, including the Rust reviewer in `tui/`; OpenCode installs

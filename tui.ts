@@ -75,7 +75,7 @@ export default Plugin.define({
           }, {
             id: "opencode-annotate.annotate-web",
             title: "Annotate webpage (browser)",
-            description: "Pair Chrome with this session, open a URL or HTML file, or off",
+            description: "Pair Chrome (creates a session if needed), open a URL or HTML file, or off",
             group: "Annotate",
             palette: true,
             slash: { name: "annotate-web", arguments: true },

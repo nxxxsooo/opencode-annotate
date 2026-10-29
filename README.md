@@ -24,7 +24,7 @@ Published on npm as `@nxxxsooo/opencode-annotate`. It replaces `opencode-plannot
 /annotate ~/Documents/notes.txt   Review a plain-text document
 /annotate-pick                    Choose a recent reply or mid-turn progress update
 /annotate-selection               Review the message containing your last transcript selection
-/annotate-web                     Open this session for browser pairing
+/annotate-web                     Pair this session, or create an empty one from home
 /annotate-web page.html           Review the specified local HTML in Chrome
 /annotate-web https://example.com Review the specified webpage
 /annotate-web off                 Revoke this session's browser pairing
@@ -53,6 +53,15 @@ Install the plugin:
 ```sh
 opencode plugin add @nxxxsooo/opencode-annotate@latest
 ```
+
+Update an existing installation explicitly:
+
+```sh
+opencode plugin update @nxxxsooo/opencode-annotate@latest
+```
+
+`@latest` selects the current npm release when installing or updating; publishing a
+release does not itself replace an installed copy. Keep your existing plugin `options`.
 
 OpenCode loads the server tools and TUI commands from one entry in your global
 **`opencode.json`** or **`opencode.jsonc`**. Run `/reload` if the command list has not refreshed.
@@ -162,7 +171,9 @@ Requirements: macOS and Chrome 116+, plus Node 22+ for the native host.
    opens no HTTP port.
 3. Reopen the OpenCode terminal client; the shared service needs no restart.
 
-Run `/annotate-web` in a target session, then open the Chrome extension. A sole live
+Run `/annotate-web`, then open the Chrome extension. From the blank home screen, it
+creates an empty session in the current directory using the selected model; no first
+prompt is needed. In an existing session, it pairs that session. A sole live
 session is shown automatically; with several sessions, choose one once. Click the
 destination beside **To** to change or refresh it. Its title stays visible beside Send,
 including while disconnected, with its directory available on hover and in the chooser.
@@ -425,7 +436,7 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate-selection`：先在会话里拖选文字，再批注包含这段文字的消息。
 - `/annotate-last`：固定批注最新一条完整回复，忽略附带参数。
 - `/ref`：选择并引用同项目的历史会话；`/ref --all 关键词` 跨项目搜索；`/ref ses_…` 直接指定。确认后附加上下文，不启动空闲助手。
-- `/annotate-web`：配对 Chrome；`/annotate-web 页面.html`、`/annotate-web https://…` 批注网页；`/annotate-web off` 撤销配对。
+- `/annotate-web`：配对 Chrome；空白首页会先创建空会话，无需先发提示词。`/annotate-web 页面.html`、`/annotate-web https://…` 批注网页；`/annotate-web off` 撤销配对。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 发送并返回。
 - 写批注中途按 `Ctrl+S`，一步保存、返回并发送（中文输入法开着也有效）；`Ctrl+C` 返回后由 OpenCode 询问。
 - 文档采用独立快照，反馈附原文件路径，确认后发回发起批注的会话。

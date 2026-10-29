@@ -206,7 +206,12 @@ export default {{
     }}))
     const dispose = await plugin.setup({{
       ...ctx,
-      ui: {{ ...ctx.ui, toast: {{ show(notice) {{
+      ui: {{ ...ctx.ui,
+        router: {{ ...ctx.ui.router, navigate(route) {{
+          ctx.ui.router.navigate(route)
+          writeFileSync({json.dumps(str(root / "navigated.json"))}, JSON.stringify(ctx.ui.router.current()))
+        }} }},
+        toast: {{ show(notice) {{
         appendFileSync({json.dumps(str(root / "notices.jsonl"))}, JSON.stringify(notice) + "\\n")
         ctx.ui.toast.show(notice)
       }} }} }},
@@ -228,7 +233,13 @@ export default {{
         return ctx.keymap.layer(() => {{
           const layer = factory()
           writeFileSync({json.dumps(str(ready))}, "ready")
-          return layer
+          return {{ ...layer, commands: [...layer.commands, {{
+            id: "test.annotate-home", slash: {{ name: "smoke-home", arguments: true }},
+            run() {{
+              ctx.ui.router.navigate({{ type: "home" }})
+              ctx.ui.toast.show({{ message: "Blank home ready", duration: 10000 }})
+            }},
+          }}] }}
         }})
       }} }},
       client: {{ ...ctx.client,
@@ -257,6 +268,14 @@ export default {{
           content: [{{ type: "text", text: "# Previous reply fixture\\n\\nAlpha paragraph.\\n" }}],
         }}], cursor: {{}} }} }} }},
         session: {{ ...ctx.client.session,
+        async create(...args) {{
+          writeFileSync({json.dumps(str(root / "blank-create-input.json"))}, JSON.stringify({{
+            input: args[0], selected: ctx.ui.model.current(),
+          }}))
+          const session = await ctx.client.session.create(...args)
+          writeFileSync({json.dumps(str(root / "blank-session.json"))}, JSON.stringify(session))
+          return session
+        }},
         prompt: (input) => ctx.client.session.prompt({{ ...input, resume: false }}),
       }} }},
     }})
@@ -464,15 +483,50 @@ export default {{
     assert receipt["messageID"] in web_inbox
     assert len(api("get", f"/api/session/{session}/message")["data"]) == len(messages), "No model turn should run"
 
+    # A real blank home route has no session ID. Pairing must create one through the
+    # connected SDK, navigate to it and accept the first feedback without a seed prompt.
+    submit("/smoke-home", "blank-home")
+    wait("Blank home ready", "blank-home-ready")
+    submit("/annotate-web", "blank-web")
+    wait("Ready for browser pairing", "blank-web-pairing")
+    blank = json.loads((root / "blank-session.json").read_text())
+    blank_session = blank["id"]
+    assert blank_session != session
+    assert Path(blank["location"]["directory"]).resolve() == root
+    selected = json.loads((root / "blank-create-input.json").read_text())["selected"]
+    assert blank["model"]["id"] == selected["modelID"]
+    assert blank["model"]["providerID"] == selected["providerID"]
+    assert blank["model"].get("variant") == selected.get("variant")
+    assert json.loads((root / "navigated.json").read_text()) == {"type": "session", "sessionID": blank_session}
+    assert api("get", f"/api/session/{blank_session}/message")["data"] == []
+    assert api("get", f"/api/session/{blank_session}/inbox")["data"] == []
+    target = next(json.loads(p.read_text()) for p in registry.glob("*.json")
+                  if json.loads(p.read_text()).get("sessionID") == blank_session)
+    batch["targetID"] = target["id"]
+    batch["review"]["annotations"][0]["comment"] = "SMOKE blank-session feedback"
+    receipt = send_batch()
+    assert receipt["state"] == "admitted", receipt
+    blank_inbox = json.dumps(api("get", f"/api/session/{blank_session}/inbox"))
+    assert "SMOKE blank-session feedback" in blank_inbox and receipt["messageID"] in blank_inbox
+    assert api("get", f"/api/session/{blank_session}/message")["data"] == [], "No model turn should run"
+    assert "SMOKE blank-session feedback" not in json.dumps(api("get", f"/api/session/{session}/inbox"))
+    submit("/annotate-web off", "blank-web-off")
+    wait("Browser pairing revoked", "blank-web-revoked")
+    assert not (registry / f'{target["id"]}.json').exists()
+
     print(json.dumps({"passed": ["JSONC auto-annotation options", "automatic exact-reply lookup",
                                   "short/progress suppression", "automatic trigger deduplication", "JSONC toggle hot reload",
                                   "real TUI launch", "create annotation", "terminal restore",
                                   "confirmed API delivery", "empty review", "cancelled review",
                                   "document path arguments", "document API delivery", "last fixed to latest",
-                                   "picker with progress updates", "browser pairing", "browser API delivery", "retry deduplication"],
+                                   "picker with progress updates", "browser pairing", "browser API delivery", "retry deduplication",
+                                   "blank-home session creation", "blank-session browser delivery", "blank-session revocation"],
                       "theme": THEME_MODE, "inheritedColors": INHERIT_THEME, "sendKey": SEND_KEY,
                       "evidence": str(root)}, ensure_ascii=False))
 finally:
     tmux("kill-server", check=False)
     if session:
         api("delete", f"/api/session/{session}")
+    blank_file = root / "blank-session.json"
+    if blank_file.exists():
+        api("delete", f'/api/session/{json.loads(blank_file.read_text())["id"]}')

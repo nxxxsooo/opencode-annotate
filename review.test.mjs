@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { test } from "node:test"
+import { listTargets } from "./bridge/receiver.mjs"
+import { request } from "./bridge/wire.mjs"
 
 const moduleURL = new URL("./review.mjs", import.meta.url)
 const load = () => import(moduleURL)
@@ -32,9 +35,9 @@ test("latest reply excludes streaming text, tool commentary, errors, and reasoni
   assert.equal(selectReply([messages.at(-1)]), undefined)
 })
 
-function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message } = {}) {
-  let route = { type: "session", sessionID: "ses_original" }
-  const sent = [], transitions = [], notices = []
+function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message, route: initialRoute } = {}) {
+  let route = initialRoute ?? { type: "session", sessionID: "ses_original" }
+  const sent = [], transitions = [], notices = [], created = [], navigations = []
   let confirmationCount = 0
   let pages = 0
   let gets = 0
@@ -49,7 +52,7 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       async resume() { await null; transitions.push("resume") },
       requestRender() { transitions.push("render") },
     },
-    data: { session: {
+    data: { location: { default: () => ({ directory: sessionDir }) }, session: {
       get: () => ({ title: "Original session" }),
       status: id => (assert.equal(id, "ses_original"), status),
       message: {
@@ -80,6 +83,11 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       }
       return { data: [reply("msg_final", "# Review fixture\n\nAlpha paragraph.\n")], cursor: {} }
     } }, session: {
+      async create(input) {
+        created.push(input)
+        sessionDir = input.location.directory
+        return { id: "ses_original", title: "New session", location: input.location }
+      },
       message: { async get(input, options) {
         assert.equal(input.sessionID, "ses_original")
         assert.equal(input.messageID, "msg_exact")
@@ -99,7 +107,8 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       return { id: input.id, sessionID: input.sessionID, type: "user" }
     } } },
     ui: {
-      router: { current: () => route },
+      router: { current: () => route, navigate(next) { navigations.push(next); route = next } },
+      model: { current: () => ({ providerID: "fixture", modelID: "fixture", variant: "high" }) },
       toast: { show: notice => notices.push(notice) },
       dialog: {
         clear() {},
@@ -112,8 +121,10 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
     },
   }
   return {
-    ctx, sent, transitions, notices, confirmations: () => confirmationCount, pages: () => pages, gets: () => gets,
+    ctx, sent, transitions, notices, created, navigations,
+    confirmations: () => confirmationCount, pages: () => pages, gets: () => gets,
     setStatus: value => { status = value },
+    setRoute: value => { route = value },
   }
 }
 
@@ -133,6 +144,7 @@ async function harness(t, options = {}) {
   const command = createReviewCommand(state.ctx, {
     tempRoot: root,
     inputSource,
+    web: options.web,
     interactive: async input => {
       invocation = input
       assert.deepEqual(state.transitions, ["suspend"])
@@ -376,6 +388,155 @@ test("webpages route to /annotate-web instead of /annotate", async t => {
   await h.command.run("https://example.com")
   assert.deepEqual(h.transitions, [])
   assert.ok(h.notices.some(n => n.variant === "error" && /annotate-web/.test(n.message)))
+})
+
+async function browserHarness(t, options = {}) {
+  // Keep Unix socket paths below macOS's 104-byte limit and out of the live registry.
+  const base = path.join(os.homedir(), ".cache")
+  await mkdir(base, { recursive: true })
+  const root = await mkdtemp(path.join(base, "oa-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const opened = []
+  const h = await harness(t, {
+    ...options, web: { receiver: { root }, open: async url => { opened.push(url) } },
+  })
+  return { ...h, opened, targets: () => listTargets(root) }
+}
+
+test("web review from home creates an empty session and pins later feedback to it", async t => {
+  const h = await browserHarness(t, { route: { type: "home" } })
+  h.ctx.location = { directory: h.root }
+  await h.command.web()
+  assert.deepEqual(h.created, [{
+    location: { directory: h.root }, model: { providerID: "fixture", id: "fixture", variant: "high" },
+  }])
+  assert.deepEqual(h.navigations, [{ type: "session", sessionID: "ses_original" }])
+  const [target] = await h.targets()
+  assert.equal(target.sessionID, "ses_original")
+  assert.equal(target.directory, h.root)
+  assert.deepEqual(h.sent, [], "pairing must not send a prompt")
+  assert.equal(h.pages(), 0, "web review must not read assistant history")
+  assert.deepEqual(h.transitions, [])
+  assert.ok(h.notices.some(n => /Ready for browser pairing/.test(n.message)))
+
+  await h.command.web()
+  assert.equal(h.created.length, 1, "re-pairing reuses the empty session")
+  assert.equal((await h.targets()).length, 1)
+  h.setRoute({ type: "session", sessionID: "ses_other" })
+  const receipt = await request(target.socket, {
+    action: "send", targetID: target.id, batchID: randomUUID(),
+    review: { version: 1, page: { url: "https://example.test/", title: "First review" }, annotations: [{
+      id: "first-note", revision: 1, kind: "comment", comment: "Start with this page", createdAt: new Date().toISOString(),
+      anchor: { type: "text", quote: "Alpha", selector: "#alpha" },
+    }] },
+  })
+  assert.equal(receipt.state, "admitted", JSON.stringify(receipt))
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent[0].sessionID, "ses_original")
+  assert.match(h.sent[0].text, /Start with this page/)
+
+  h.setRoute({ type: "session", sessionID: "ses_original" })
+  await h.command.web("off")
+  assert.deepEqual(await h.targets(), [])
+})
+
+test("home webpage targets use the default location when no explicit location is set", async t => {
+  for (const input of ["https://example.test/page", '"中文 page.html"']) {
+    const sessionDir = await documentFolder(t)
+    await writeFile(path.join(sessionDir, "中文 page.html"), "<h1>Page</h1>")
+    const h = await browserHarness(t, { route: { type: "home" }, sessionDir })
+    h.ctx.location = undefined
+    await h.command.web(input)
+    assert.equal(h.created.length, 1)
+    assert.deepEqual(h.created[0].location, { directory: sessionDir })
+    assert.equal((await h.targets())[0].directory, sessionDir)
+    assert.equal(h.opened.length, 1)
+    assert.equal(input.startsWith("https:") ? h.opened[0] : new URL(h.opened[0]).protocol,
+      input.startsWith("https:") ? input : "file:")
+    assert.deepEqual(h.sent, [])
+  }
+})
+
+test("an in-flight home pairing captures its location and model without stealing another tab", async t => {
+  const h = await browserHarness(t, { route: { type: "home" } })
+  h.ctx.location = { directory: h.root }
+  let entered, release
+  const creating = new Promise(resolve => { entered = resolve })
+  const ready = new Promise(resolve => { release = resolve })
+  const create = h.ctx.client.session.create
+  h.ctx.client.session.create = async input => {
+    const session = await create(input)
+    entered()
+    await ready
+    return session
+  }
+  const pairing = h.command.web()
+  await creating
+  await h.command.web()
+  h.ctx.location = { directory: "/another-project" }
+  h.ctx.ui.model.current = () => ({ providerID: "other", modelID: "other" })
+  h.setRoute({ type: "session", sessionID: "ses_other" })
+  release()
+  await pairing
+  assert.equal(h.created.length, 1)
+  assert.equal(h.created[0].location.directory, h.root)
+  assert.equal(h.created[0].model.id, "fixture")
+  assert.deepEqual(h.navigations, [])
+  assert.equal(h.ctx.ui.router.current().sessionID, "ses_other")
+  assert.equal((await h.targets())[0].sessionID, "ses_original")
+  assert.deepEqual(h.sent, [])
+})
+
+test("invalid targets, revocation and text commands do not create a session from home", async t => {
+  for (const input of ["off", "web off", "notes.md", "javascript:alert(1)", "missing.html"]) {
+    const h = await browserHarness(t, { route: { type: "home" } })
+    h.ctx.location = { directory: h.root }
+    await h.command.web(input)
+    await h.command.run()
+    await h.command.pick()
+    await h.command.selection()
+    assert.deepEqual(h.created, [], input)
+    assert.deepEqual(h.navigations, [])
+    assert.deepEqual(await h.targets(), [])
+    assert.deepEqual(h.sent, [])
+    assert.equal(h.pages(), 0)
+    assert.ok(h.notices.length > 0)
+  }
+})
+
+test("session creation failure leaves pairing retryable", async t => {
+  const h = await browserHarness(t, { route: { type: "home" } })
+  const create = h.ctx.client.session.create
+  h.ctx.client.session.create = async () => { throw new Error("Session creation failed") }
+  await h.command.web()
+  assert.ok(h.notices.some(n => n.variant === "error" && /Session creation failed/.test(n.message)))
+  assert.deepEqual(await h.targets(), [])
+  assert.deepEqual(h.navigations, [])
+  h.ctx.client.session.create = create
+  await h.command.web()
+  assert.equal((await h.targets()).length, 1)
+})
+
+test("disposing during session creation never registers or focuses the new session", async t => {
+  const h = await browserHarness(t, { route: { type: "home" } })
+  let entered, release
+  const creating = new Promise(resolve => { entered = resolve })
+  const ready = new Promise(resolve => { release = resolve })
+  const create = h.ctx.client.session.create
+  h.ctx.client.session.create = async input => {
+    const session = await create(input)
+    entered()
+    await ready
+    return session
+  }
+  const pairing = h.command.web()
+  await creating
+  await h.command.dispose()
+  release()
+  await pairing
+  assert.deepEqual(await h.targets(), [])
+  assert.deepEqual(h.navigations, [])
+  assert.deepEqual(h.sent, [])
 })
 
 test("the picker offers progress updates and sends feedback on the chosen one", async t => {

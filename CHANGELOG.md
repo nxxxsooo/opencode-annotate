@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.10.1 — automatic long-reply review
+## 0.10.1 — automatic review and blank-session web pairing
+
+- Let `/annotate-web` start from the blank home screen by creating and pairing an empty
+  session in the current directory with the selected model. No prompt or model turn is
+  needed before annotating; feedback remains bound to that session after switching tabs.
 
 - Add opt-in automatic review of long replies through `autoAnnotate` and
   `autoAnnotateThreshold` in the plugin's JSONC options (default: off, 2,000 characters).

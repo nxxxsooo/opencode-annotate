@@ -170,15 +170,14 @@ export function createReviewCommand(context, options = {}) {
   // run, so keep the last one per session.
   context.renderer.on("selection", remember)
 
-  async function start(resolve, automatic) {
+  async function start(resolve, { automatic, home = false } = {}) {
     if (disposed) return
     if (automatic && (active || !automatic())) return
     if (active) return notice("An annotation is already in progress.")
     // Capture before the first await: changing tabs must never redirect a review.
     const route = context.ui.router.current()
-    if (route.type !== "session") return notice("Open a session first.")
-    const sessionID = route.sessionID
-    const title = context.data.session.get(sessionID)?.title ?? sessionID
+    if (route.type !== "session" && !(home && route.type === "home")) return notice("Open a session first.")
+    const sessionID = route.type === "session" ? route.sessionID : undefined
     const controller = new AbortController()
     active = controller
     let directory
@@ -187,6 +186,7 @@ export function createReviewCommand(context, options = {}) {
       const source = await resolve({ sessionID, signal: controller.signal })
       if (controller.signal.aborted || !source) return
       if (automatic && !automatic()) return
+      const title = context.data.session.get(sessionID)?.title ?? sessionID
 
       directory = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "opencode-annotate-"))
       keepDraft = true
@@ -327,11 +327,11 @@ export function createReviewCommand(context, options = {}) {
     const source = selectReply([message])
     // Count Unicode characters, including Markdown, rather than bytes or UTF-16 units.
     if (source && [...source.text.trim()].length > threshold) return source
-  }, () => {
+  }, { automatic: () => {
     const route = context.ui.router.current()
     return current() && route.type === "session" && route.sessionID === sessionID
       && context.data.session.status(sessionID) === "idle"
-  })
+  } })
 
   const pick = () => start(async ({ sessionID, signal }) => {
     const texts = await recentTexts(context.client, sessionID, signal, 30)
@@ -361,12 +361,15 @@ export function createReviewCommand(context, options = {}) {
     return texts.find(text => compact(text.text).includes(needle)) ?? { text: selected, selection: true }
   })
 
-  const webReview = (input = "") => start(async ({ sessionID }) => {
-    const target = input.trim()
-    if (!(await web.run(target === "" ? "web" : target === "off" ? "web off" : target, sessionID))) {
-      throw new Error("Use a webpage URL, an HTML file, or off.")
-    }
-  })
+  const webReview = (input = "") => {
+    const value = input.trim()
+    const target = value === "" ? "web" : value === "off" ? "web off" : value
+    return start(async ({ sessionID, signal }) => {
+      if (!(await web.run(target, sessionID, signal))) {
+        throw new Error("Use a webpage URL, an HTML file, or off.")
+      }
+    }, { home: target !== "web off" })
+  }
 
   return {
     run, auto, pick, selection: annotateSelection, web: webReview,

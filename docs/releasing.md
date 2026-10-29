@@ -1,28 +1,42 @@
 # Releasing
 
-## Recovery snapshot — 2026-10-29
+## 0.10.1 release baseline — 2026-10-29
 
-| Surface | Verified state |
+This patch combines automatic long-reply review with the accepted blank-home browser
+pairing fix. `/annotate-web` can create an empty session using the current directory
+and selected model, then receive the first review without a seed prompt. Automatic
+review is opt-in; opening or pairing a review never starts a model turn.
+
+| Surface | Release contract |
 |---|---|
-| Public release | `v0.10.0` remains at `67cd250bef6139991f947331f0e5117f12f1e95e`; npm `latest` is `0.10.0`, with the matching published GitHub Release. |
-| Published contents | Owned TUI and conversation references. All five native executable bytes matched the npm archive; OIDC provenance was verified. Automatic review is **not** in this release. |
-| Automatic-review target | `0.10.1`, release commit `9b31d75b10330fc7e23657285146f0e20e31d533`, containing feature commit `539493069c38f732bbce7f70a1446d0344a28df7`. |
-| Target verification | [CI 40804394418](https://github.com/nxxxsooo/opencode-annotate/actions/runs/40804394418) passed on the exact target commit. Local evidence includes 74 Node tests, Rust checks, JSONC hot reload/automatic exact-reply smoke, and conversation-reference smoke. |
-| Delivery boundary | `v0.10.1` has not been created or published, and the daily installation still loads the local checkout. The intermediate `0.11.0` preparation was superseded before any tag or publication. |
-| Retirement | The separate personal reviewer repository returns 404. Its former checkout and custom launchers were removed; `tui/` is the maintained source and retains the original MIT notice. |
+| Source | Push the exact accepted fix on `main`; require its five native builds and package CI to pass before tagging. |
+| GitHub Release | Publish `v0.10.1` at that verified commit, with the matching changelog and install/update commands. |
+| npm | Publish `@nxxxsooo/opencode-annotate@0.10.1` through `publish.yml`; verify `latest`, provenance, package files and all five native executables against the release build. |
+| Maintainer install | Replace the checkout package value with the npm source, preserving options; verify the installed version and run the published package in isolated smoke sessions. |
+| Local checks | 80 Node tests, Rust formatting/Clippy/workspace tests, and 21 real OpenCode smoke scenarios passed, including blank-home creation, first browser-note delivery and revocation. The maintainer also tested and accepted the fix. |
+| Previous release | `v0.10.0` remains at `67cd250bef6139991f947331f0e5117f12f1e95e`, containing the owned TUI and conversation references. |
+| Retirement | The separate reviewer repository and former checkout were removed after 0.10.0 verification; `tui/` is maintained here with its original MIT notice. |
 
-The user's release-series direction is recorded as `auto-review-release-series` in
-[`sources.json`](../sources.json). Published tags and npm versions must remain immutable.
-The verified release anchor above is distinct from later documentation-only Save commits.
+The version-specific delivery receipt in `.local/releases/0.10.1-state.json` records
+the exact commit, CI and publish runs, registry integrity, installed source and smoke
+evidence. Publishing and local installation must each be verified before marking it complete.
+
+| Decision | Basis |
+|---|---|
+| Keep automatic review in the 0.10 series; use the pending 0.10.1 for this fix. | `auto-review-release-series` in [`sources.json`](../sources.json). |
+| Ship the blank-home fix after real user testing. | `blank-home-web-acceptance` in [`sources.json`](../sources.json). |
+
+Published tags and npm versions remain immutable. The intermediate `0.11.0`
+preparation was superseded before publication.
 
 Private recovery material lives under `.local/retired/20261029-plannotator-tui/` (verified
 Git bundle, retained local-only evidence and deletion receipt). `.local/releases/` contains
 the version-specific status records and prepared `0.10.1-notes.md`.
 
-The installed options to preserve are `inheritTheme: true`, `autoAnnotate: true`, and
+The maintainer options to preserve are `inheritTheme: true`, `autoAnnotate: true`, and
 `autoAnnotateThreshold: 2000` in the single `opencode.json(c)` plugin entry. There is no
 duplicate CLI entry. Public automatic-review defaults are off and 2,000 Unicode characters,
-with a strict greater-than threshold. A future published-package install must carry these
+with a strict greater-than threshold. A published-package install must carry these
 local options over rather than reset them.
 
 ## Package identity

@@ -1,15 +1,21 @@
 #![allow(clippy::expect_used, reason = "tests assert by panicking")]
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent};
 
 use super::InputSource;
+#[cfg(unix)]
+use crate::app::Focus;
+use crate::app::Mode;
 use crate::app::review_test_support::{file_app, press};
-use crate::app::{Focus, Mode};
 
 /// A helper that logs its arguments and, for `ascii`, reports `source` as the one it left.
+#[cfg(unix)]
 fn helper(root: &Path, source: &str) -> (PathBuf, PathBuf) {
     let log = root.join("calls");
     let script = root.join("helper");
@@ -25,11 +31,13 @@ fn helper(root: &Path, source: &str) -> (PathBuf, PathBuf) {
     (script, log)
 }
 
+#[cfg(unix)]
 fn calls(log: &Path) -> Vec<String> {
     std::fs::read_to_string(log).unwrap_or_default().lines().map(str::to_owned).collect()
 }
 
 #[test]
+#[cfg(unix)]
 fn the_comment_box_writes_in_the_text_source_and_browsing_returns_to_ascii() {
     let (root, mut app, _) = file_app("input-source");
     let (script, log) = helper(&root, "com.example.wubi");

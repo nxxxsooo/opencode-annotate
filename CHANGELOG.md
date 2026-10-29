@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — automatic long-reply review
 
 - Add opt-in automatic review of long replies through `autoAnnotate` and
   `autoAnnotateThreshold` in the plugin's JSONC options (default: off, 2,000 characters).

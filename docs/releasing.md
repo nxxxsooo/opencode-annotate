@@ -1,23 +1,21 @@
 # Releasing
 
-## 0.10.1 release baseline — 2026-10-29
+## 0.10.2 release baseline — 2026-11-01
 
-This patch combines automatic long-reply review with the accepted blank-home browser
-pairing fix. `/annotate-web` can create an empty session using the current directory
-and selected model, then receive the first review without a seed prompt. Automatic
-review is opt-in; opening or pairing a review never starts a model turn.
+This patch keeps a TUI selection that starts in a table cell inside that cell, so a
+drag down a wrapped cell quotes only that cell. It changes no options or protocol.
 
 | Surface | Release contract |
 |---|---|
 | Source | Push the exact accepted fix on `main`; require its five native builds and package CI to pass before tagging. |
-| GitHub Release | Publish `v0.10.1` at that verified commit, with the matching changelog and install/update commands. |
-| npm | Publish `@nxxxsooo/opencode-annotate@0.10.1` through `publish.yml`; verify `latest`, provenance, package files and all five native executables against the release build. |
-| Maintainer install | Replace the checkout package value with the npm source, preserving options; verify the installed version and run the published package in isolated smoke sessions. |
-| Local checks | 80 Node tests, Rust formatting/Clippy/workspace tests, and 21 real OpenCode smoke scenarios passed, including blank-home creation, first browser-note delivery and revocation. The maintainer also tested and accepted the fix. |
-| Previous release | `v0.10.0` remains at `67cd250bef6139991f947331f0e5117f12f1e95e`, containing the owned TUI and conversation references. |
+| GitHub Release | Publish `v0.10.2` at that verified commit, with the matching changelog and install/update commands. |
+| npm | Publish `@nxxxsooo/opencode-annotate@0.10.2` through `publish.yml`; verify `latest`, provenance, package files and all five native executables against the release build. |
+| Maintainer install | Update the npm-sourced entry, preserving options; verify the installed version. |
+| Local checks | Node tests, Rust formatting/Clippy/workspace tests (including a wrapped-cell drag regression), and 21 real OpenCode smoke scenarios passed. The maintainer tested and accepted the fix. |
+| Previous release | `v0.10.1` remains at `22c9cf932153fbf0bd72702a27fb211cf0f08ea0` (automatic review and blank-session web pairing); `v0.10.0` at `67cd250bef6139991f947331f0e5117f12f1e95e`. |
 | Retirement | The separate reviewer repository and former checkout were removed after 0.10.0 verification; `tui/` is maintained here with its original MIT notice. |
 
-The version-specific delivery receipt in `.local/releases/0.10.1-state.json` records
+The version-specific delivery receipt in `.local/releases/0.10.2-state.json` records
 the exact commit, CI and publish runs, registry integrity, installed source and smoke
 evidence. Publishing and local installation must each be verified before marking it complete.
 
@@ -31,7 +29,7 @@ preparation was superseded before publication.
 
 Private recovery material lives under `.local/retired/20261029-plannotator-tui/` (verified
 Git bundle, retained local-only evidence and deletion receipt). `.local/releases/` contains
-the version-specific status records and prepared `0.10.1-notes.md`.
+the version-specific status records and prepared release notes (`<version>-notes.md`).
 
 The maintainer options to preserve are `inheritTheme: true`, `autoAnnotate: true`, and
 `autoAnnotateThreshold: 2000` in the single `opencode.json(c)` plugin entry. There is no

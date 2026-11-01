@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2 — table cell selection
+
+- Keep a mouse or `v` selection that starts in a table cell inside that cell. Dragging
+  down a wrapped cell no longer pulls in the neighbouring columns, and overshooting the
+  cell's last line stops at its edge. Dragging into another column still selects whole rows.
+
 ## 0.10.1 — automatic review and blank-session web pairing
 
 - Let `/annotate-web` start from the blank home screen by creating and pairing an empty

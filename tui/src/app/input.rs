@@ -6,7 +6,6 @@ use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind, MouseButton, Mous
 
 use super::compose::ComposeAction;
 use super::menu::ReviewAction;
-use super::selection::Selection;
 use super::send::SendState;
 use super::{App, Focus, GUTTER, Mode, Pending, TOOLBAR};
 use crate::delivery::Delivery as _;
@@ -246,7 +245,7 @@ impl App {
             }
             Some(Action::Visual) => {
                 self.clear_selection();
-                self.selection = Some(Selection::start(self.cursor));
+                self.selection = Some(self.start_selection(self.cursor));
                 self.status = Some(format!(
                     "visual: move to extend, {} to select, {} to cancel",
                     self.keys.hint(Action::Confirm),
@@ -490,7 +489,7 @@ impl App {
                 }
                 self.cursor = pos;
                 self.pending = None;
-                self.selection = Some(Selection::start(pos));
+                self.selection = Some(self.start_selection(pos));
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if !self.selection.is_some_and(|s| s.dragging) {

@@ -381,6 +381,48 @@ fn a_mouse_selection_in_a_centered_app_selects_the_text_under_the_pointer() {
     assert_eq!(&app.open.doc.source[pending.range.clone()], "Plan");
 }
 
+/// Screen position of the first char of `needle`, from the drawn document.
+fn screen_position(app: &App, needle: &str) -> (u16, u16) {
+    let doc = app.geometry.doc;
+    (0..app.open.layout.total_rows)
+        .find_map(|index| {
+            let text = app.open.layout.row(index)?.line.to_string();
+            let byte = text.find(needle)?;
+            let column = text[..byte].chars().count();
+            Some((doc.x + column as u16, doc.y + (index - app.scroll) as u16))
+        })
+        .expect("needle is drawn")
+}
+
+#[test]
+fn dragging_down_a_wrapped_table_cell_selects_only_that_cell() {
+    let source = DocumentSource::new(
+        "| Work | Automation potential | Your involvement |\n|---|---|---|\n\
+| Credit-card emails | High: fetch, archive, parse, reconcile | Occasional mailbox authentication |\n\
+| Alipay / WeChat bills | High after export | Request exports and provide ZIP passwords |\n"
+            .to_owned(),
+        "doc.md",
+        true,
+        Provenance::Stdin,
+    );
+    let mut app = App::open(source, 60, Box::new(Discard)).expect("app opens");
+    app.data_dir = scratch_data_dir();
+    draw(&mut app);
+    let start = screen_position(&app, "High:");
+    let end = screen_position(&app, "reconcile");
+    assert!(end.1 > start.1, "the cell must wrap for this test");
+    let below = screen_position(&app, "High after");
+    for head in [(end.0 + 8, end.1), (end.0 + 8, below.1)] {
+        click(&mut app, MouseEventKind::Down(MouseButton::Left), start.0, start.1);
+        click(&mut app, MouseEventKind::Drag(MouseButton::Left), head.0, head.1);
+        click(&mut app, MouseEventKind::Up(MouseButton::Left), head.0, head.1);
+        let pending = app.pending.as_ref().expect("selection");
+        assert_eq!(&app.open.doc.source[pending.range.clone()], "High: fetch, archive, parse, reconcile");
+        app.clear_selection();
+        app.last_click = None;
+    }
+}
+
 fn open_path(app: &App) -> String {
     match &app.open.source.provenance {
         Provenance::File { path } => path.file_name().expect("name").to_string_lossy().into_owned(),

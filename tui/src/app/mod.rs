@@ -488,6 +488,11 @@ impl App {
         self.pending = None;
     }
 
+    /// A selection starting at `at`, held to the table cell there if there is one.
+    fn start_selection(&self, at: (usize, usize)) -> Selection {
+        Selection::start(at, selection::table_cell_at(&self.open.layout, &self.open.doc, at))
+    }
+
     fn select_block(&mut self, block: usize) {
         if self.open.doc.blocks.is_empty() {
             return;
@@ -690,7 +695,8 @@ impl App {
             cells.filter(|(_, cell)| cell.is_some_and(|o| range.contains(&o))).map(|(pos, _)| pos).collect();
         let first = *hits.first().ok_or_else(|| anyhow::anyhow!("quote is not rendered"))?;
         let last = hits.last().copied().unwrap_or(first);
-        self.selection = Some(Selection::finished(first, last));
+        let cell = selection::table_cell_at(&self.open.layout, &self.open.doc, first);
+        self.selection = Some(Selection::finished(first, last, cell));
         self.finish_selection();
         Ok(())
     }

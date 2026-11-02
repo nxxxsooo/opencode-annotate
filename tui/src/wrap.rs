@@ -152,7 +152,26 @@ pub(crate) fn wrap_line(line: &Line<'_>, offsets: &[Option<usize>], width: usize
         .collect()
 }
 
-/// Keep one row; clip anything past `width` (code and tables keep their columns).
+/// Hard-wrap one code line at `width` columns: every character stays, in order, with its
+/// spacing intact; only the row breaks move.
+pub(crate) fn wrap_columns(line: &Line<'_>, offsets: &[Option<usize>], width: usize) -> Vec<Row> {
+    let width = width.max(1);
+    let mut pieces = vec![Vec::new()];
+    let mut used = 0usize;
+    for cell in cells_of(line, offsets) {
+        if used + cell.width > width && pieces.last().is_some_and(|p| !p.is_empty()) {
+            pieces.push(Vec::new());
+            used = 0;
+        }
+        if let Some(last) = pieces.last_mut() {
+            last.push(cell);
+        }
+        used += cell.width;
+    }
+    pieces.into_iter().map(|piece| finish_row(piece, line.style)).collect()
+}
+
+/// Keep one row; clip anything past `width` (tables keep their columns).
 pub(crate) fn clip_line(line: &Line<'_>, offsets: &[Option<usize>], width: usize) -> Row {
     finish_row(clip_cells(cells_of(line, offsets), width), line.style)
 }
@@ -199,6 +218,15 @@ mod tests {
         );
         let row = clip_line(&Line::from("日本"), &identity(2), 10);
         assert_eq!(row.cells, [Some(0), Some(0), Some(1), Some(1)]);
+    }
+
+    #[test]
+    fn code_lines_hard_wrap_without_losing_characters_or_spacing() {
+        let rows = wrap_columns(&Line::from("  - **手动**：上线"), &identity(13), 10);
+        assert_eq!(plain(&rows), ["  - **手动", "**：上线"]);
+        assert_eq!(rows.get(1).and_then(|r| r.cells.first().copied()), Some(Some(8)));
+        assert!(rows.iter().all(|r| r.cells.len() <= 10));
+        assert_eq!(wrap_columns(&Line::from(""), &[], 10).len(), 1);
     }
 
     #[test]

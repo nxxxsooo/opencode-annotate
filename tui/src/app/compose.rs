@@ -114,13 +114,19 @@ impl Compose {
     }
 
     /// The buffer wrapped to `width` display cells, with the cursor's (row, col) in that
-    /// wrapping. Explicit newlines always break; a full row wraps to the next.
+    /// wrapping. Explicit newlines always break; a full row wraps to the next, and so does
+    /// a cursor that would otherwise sit past the last cell of a full row.
     pub(super) fn wrapped(&self, width: usize) -> (Vec<String>, usize, usize) {
         let width = width.max(1);
         let mut lines = vec![String::new()];
         let mut used = 0;
         let (mut cursor_row, mut cursor_col) = (0, 0);
         for (i, &c) in self.chars.iter().enumerate() {
+            let w = if c == '\n' { 0 } else { width_of(c) };
+            if used + w > width || (i == self.cursor && used >= width) {
+                lines.push(String::new());
+                used = 0;
+            }
             if i == self.cursor {
                 (cursor_row, cursor_col) = (lines.len() - 1, used);
             }
@@ -129,19 +135,51 @@ impl Compose {
                 used = 0;
                 continue;
             }
-            let w = width_of(c);
-            if used + w > width {
-                lines.push(String::new());
-                used = 0;
-            }
             if let Some(last) = lines.last_mut() {
                 last.push(c);
             }
             used += w;
         }
         if self.cursor == self.chars.len() {
+            if used >= width {
+                lines.push(String::new());
+                used = 0;
+            }
             (cursor_row, cursor_col) = (lines.len() - 1, used);
         }
         (lines, cursor_row, cursor_col)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Compose;
+
+    fn at(text: &str, cursor: usize) -> Compose {
+        let mut compose = Compose::with_text(text);
+        compose.cursor = cursor;
+        compose
+    }
+
+    #[test]
+    fn cursor_after_a_full_wide_row_moves_to_the_next_row() {
+        let (lines, row, col) = Compose::with_text("翟敏").wrapped(4);
+        assert_eq!((lines, row, col), (vec!["翟敏".to_owned(), String::new()], 1, 0));
+    }
+
+    #[test]
+    fn cursor_before_a_wrapping_wide_char_sits_with_that_char() {
+        let (lines, row, col) = at("abc敏", 3).wrapped(4);
+        assert_eq!((lines, row, col), (vec!["abc".to_owned(), "敏".to_owned()], 1, 0));
+    }
+
+    #[test]
+    fn cursor_never_lands_past_the_wrap_width() {
+        for text in ["abcd", "ab敏", "翟敏\nx", "敏敏敏敏敏"] {
+            for cursor in 0..=text.chars().count() {
+                let (_, _, col) = at(text, cursor).wrapped(4);
+                assert!(col < 4, "{text:?} cursor {cursor} -> col {col}");
+            }
+        }
     }
 }

@@ -25,7 +25,8 @@ pub(crate) enum BlockKind {
 }
 
 impl BlockKind {
-    /// Code and tables keep their columns; everything else word-wraps.
+    /// Code and tables keep their columns (code hard-wraps at the edge, tables reflow
+    /// by cell); everything else word-wraps.
     pub(crate) fn preserves_columns(self) -> bool {
         matches!(self, BlockKind::CodeBlock | BlockKind::Table)
     }

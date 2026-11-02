@@ -1,6 +1,6 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, and reference previous conversations.",
   "license": "MIT",
   "type": "module",

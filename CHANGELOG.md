@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.3 — long code lines and compose cursor
+
+- Wrap long lines in code blocks at the edge of the view instead of cutting them off, so
+  every character stays readable and can be selected and annotated. Spacing and
+  indentation are kept; tables reflow as before.
+- Keep the comment box cursor inside the box: when a row is exactly full, the cursor moves
+  to the start of the next row instead of rendering over the last wide character.
+
 ## 0.10.2 — table cell selection
 
 - Keep a mouse or `v` selection that starts in a table cell inside that cell. Dragging

@@ -1,21 +1,21 @@
 # Releasing
 
-## 0.10.2 release baseline — 2026-11-01
+## 0.10.3 release baseline — 2026-11-02
 
-This patch keeps a TUI selection that starts in a table cell inside that cell, so a
-drag down a wrapped cell quotes only that cell. It changes no options or protocol.
+This patch hard-wraps long code-block lines in the TUI instead of clipping them, and keeps
+the comment box cursor inside a full row. It changes no options or protocol.
 
 | Surface | Release contract |
 |---|---|
 | Source | Push the exact accepted fix on `main`; require its five native builds and package CI to pass before tagging. |
-| GitHub Release | Publish `v0.10.2` at that verified commit, with the matching changelog and install/update commands. |
-| npm | Publish `@nxxxsooo/opencode-annotate@0.10.2` through `publish.yml`; verify `latest`, provenance, package files and all five native executables against the release build. |
+| GitHub Release | Publish `v0.10.3` at that verified commit, with the matching changelog and install/update commands. |
+| npm | Publish `@nxxxsooo/opencode-annotate@0.10.3` through `publish.yml`; verify `latest`, provenance, package files and all five native executables against the release build. |
 | Maintainer install | Update the npm-sourced entry, preserving options; verify the installed version. |
-| Local checks | Node tests, Rust formatting/Clippy/workspace tests (including a wrapped-cell drag regression), and 21 real OpenCode smoke scenarios passed. The maintainer accepted the fix for release. |
-| Previous release | `v0.10.1` remains at `22c9cf932153fbf0bd72702a27fb211cf0f08ea0` (automatic review and blank-session web pairing); `v0.10.0` at `67cd250bef6139991f947331f0e5117f12f1e95e`. |
+| Local checks | Node tests, Rust formatting/Clippy/workspace tests (including code-wrap and compose-cursor regressions), and 21 real OpenCode smoke scenarios passed. The maintainer accepted the fix for release. |
+| Previous release | `v0.10.2` remains at `3573f37219bfab170b4f6626d95996a42bb0ff90` (table cell selection); `v0.10.1` at `22c9cf932153fbf0bd72702a27fb211cf0f08ea0`; `v0.10.0` at `67cd250bef6139991f947331f0e5117f12f1e95e`. |
 | Retirement | The separate reviewer repository and former checkout were removed after 0.10.0 verification; `tui/` is maintained here with its original MIT notice. |
 
-The version-specific delivery receipt in `.local/releases/0.10.2-state.json` records
+The version-specific delivery receipt in `.local/releases/0.10.3-state.json` records
 the exact commit, CI and publish runs, registry integrity, installed source and smoke
 evidence. Publishing and local installation must each be verified before marking it complete.
 

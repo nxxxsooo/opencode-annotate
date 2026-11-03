@@ -1,21 +1,22 @@
 # Releasing
 
-## 0.10.3 release baseline — 2026-11-02
+## 0.10.4 release baseline — 2026-11-03
 
-This patch hard-wraps long code-block lines in the TUI instead of clipping them, and keeps
-the comment box cursor inside a full row. It changes no options or protocol.
+This patch makes an interrupted reply (finish `error` with an `aborted` error, for example
+one stopped while a question tool waited) eligible for `/annotate`, `/annotate-pick` and
+`/ref`. Real failures and streaming replies stay excluded. It changes no options or protocol.
 
 | Surface | Release contract |
 |---|---|
-| Source | Push the exact accepted fix on `main`; require its five native builds and package CI to pass before tagging. |
-| GitHub Release | Publish `v0.10.3` at that verified commit, with the matching changelog and install/update commands. |
-| npm | Publish `@nxxxsooo/opencode-annotate@0.10.3` through `publish.yml`; verify `latest`, provenance, package files and all five native executables against the release build. |
-| Maintainer install | Update the npm-sourced entry, preserving options; verify the installed version. |
-| Local checks | Node tests, Rust formatting/Clippy/workspace tests (including code-wrap and compose-cursor regressions), and 21 real OpenCode smoke scenarios passed. The maintainer accepted the fix for release. |
-| Previous release | `v0.10.2` remains at `3573f37219bfab170b4f6626d95996a42bb0ff90` (table cell selection); `v0.10.1` at `22c9cf932153fbf0bd72702a27fb211cf0f08ea0`; `v0.10.0` at `67cd250bef6139991f947331f0e5117f12f1e95e`. |
+| Source | `08c09d8` (fix) and `11cf77c` (release) on `main`, built from a clean worktree that excluded the unreleased browser-startup work; CI run 41567068146 passed all five native builds and package checks. |
+| GitHub Release | `v0.10.4` at `11cf77c14f7f55e4bfbc101634bc16de7cb10e71`, with the matching changelog and install/update commands. |
+| npm | `@nxxxsooo/opencode-annotate@0.10.4` is `latest`, published by `publish.yml` run 41567609571 with `gitHead` `11cf77c`. |
+| Maintainer install | Not updated from npm: the daily `opencode.jsonc` entry points at this checkout, which already contains the fix plus unreleased work. Switch back to `@nxxxsooo/opencode-annotate@latest` once that work is released or shelved, preserving options. |
+| Local checks | Node tests, Rust checks, 21 real OpenCode smoke scenarios and the `/ref` reference smoke passed; `selectReply` accepted the real interrupted message that prompted the fix. |
+| Previous release | `v0.10.3` remains at `a3c166b319d64719fac0ffcc76b227f58080cd4e` (long code lines); `v0.10.2` at `3573f37219bfab170b4f6626d95996a42bb0ff90`; `v0.10.1` at `22c9cf932153fbf0bd72702a27fb211cf0f08ea0`; `v0.10.0` at `67cd250bef6139991f947331f0e5117f12f1e95e`. |
 | Retirement | The separate reviewer repository and former checkout were removed after 0.10.0 verification; `tui/` is maintained here with its original MIT notice. |
 
-The version-specific delivery receipt in `.local/releases/0.10.3-state.json` records
+The version-specific delivery receipt in `.local/releases/0.10.4-state.json` records
 the exact commit, CI and publish runs, registry integrity, installed source and smoke
 evidence. Publishing and local installation must each be verified before marking it complete.
 

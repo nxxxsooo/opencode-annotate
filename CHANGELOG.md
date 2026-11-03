@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.4 — interrupted replies
+
+- Let `/annotate`, `/annotate-pick` and `/ref` use the text of an interrupted reply, such
+  as one stopped while its questions were waiting for an answer. Previously `/annotate`
+  reported that the session had no completed reply.
+
 ## 0.10.3 — long code lines and compose cursor
 
 - Wrap long lines in code blocks at the edge of the view instead of cutting them off, so

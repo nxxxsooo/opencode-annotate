@@ -35,6 +35,17 @@ test("latest reply excludes streaming text, tool commentary, errors, and reasoni
   assert.equal(selectReply([messages.at(-1)]), undefined)
 })
 
+test("an interrupted reply keeps its streamed text selectable", async () => {
+  const { selectReply } = await load()
+  // OpenCode's shape when a turn is stopped while a question tool waits for an answer.
+  const interrupted = reply("msg_interrupted", "Plan", {
+    time: { created: 500, completed: 501 }, finish: "error", rawFinish: "tool_use",
+    error: { type: "aborted", message: "Step interrupted" },
+  })
+  assert.deepEqual(selectReply([reply("msg_final", "First"), interrupted]), { id: "msg_interrupted", text: "Plan" })
+  assert.equal(selectReply([{ ...interrupted, time: { created: 500 } }]), undefined)
+})
+
 function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message, route: initialRoute } = {}) {
   let route = initialRoute ?? { type: "session", sessionID: "ses_original" }
   const sent = [], transitions = [], notices = [], created = [], navigations = []

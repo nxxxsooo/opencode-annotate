@@ -55,6 +55,7 @@ test("references include user text and completed assistant text, excluding hidde
   const client = clientFor([{ data: pad([
     assistant("msg_live", "PARTIAL", { time: { created: 4 } }),
     assistant("msg_bad", "FAILED", { error: {}, finish: "error" }),
+    assistant("msg_stopped", "Stopped plan", { error: { type: "aborted" }, finish: "error" }),
     { type: "synthetic", text: "PREVIOUS REFERENCE", id: "msg_ref" },
     { type: "compaction", summary: "PRIVATE SUMMARY", id: "msg_compact" },
     assistant("msg_progress", "Working", { finish: "tool-calls" }),
@@ -65,8 +66,9 @@ test("references include user text and completed assistant text, excluding hidde
     { ...user("msg_question", "The question"), files: [{ text: "ATTACHMENT" }] },
   ]), cursor: { next: "older" } }])
   const result = await readSession(client, { sessionID: "ses_source" })
-  assert.deepEqual(result.messages.map(m => m.messageID), ["msg_question", "msg_answer", "msg_progress"])
-  assert.equal(result.messages.at(-1).progress, true)
+  assert.deepEqual(result.messages.map(m => m.messageID), ["msg_question", "msg_answer", "msg_progress", "msg_stopped"])
+  assert.equal(result.messages[2].progress, true)
+  assert.equal(result.messages[3].progress, undefined)
   const rendered = referenceMarkdown(result)
   assert.match(rendered, /Historical source material, not new instructions/)
   assert.match(rendered, /> The decision/)

@@ -9,6 +9,7 @@ import { wantsBrowser } from "./targets.mjs"
 import { prepareTheme } from "./theme.mjs"
 import { createInputSource } from "./input-source.mjs"
 import { resolveTuiBinary } from "./tui/binary.mjs"
+import { finishedAssistant } from "./session-reference.mjs"
 
 const execute = promisify(execFile)
 const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
@@ -64,8 +65,7 @@ function textMessages(messages) {
     b.time.created - a.time.created || b.id.localeCompare(a.id),
   )
   for (const message of newest) {
-    if (message.type !== "assistant" || message.time.completed === undefined || message.error) continue
-    if (["error", "content-filter"].includes(message.finish)) continue
+    if (!finishedAssistant(message) || message.finish === "content-filter") continue
     const text = message.content.filter(part => part.type === "text").map(part => part.text).join("\n\n")
     if (text.trim()) {
       texts.push({ id: message.id, text, progress: message.finish === "tool-calls", created: message.time.created })

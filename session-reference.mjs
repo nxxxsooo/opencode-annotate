@@ -29,9 +29,17 @@ export async function searchSessions(client, current, { query = "", allProjects 
   }
 }
 
+// An interrupted turn ends with finish "error" and an "aborted" error, yet keeps the text
+// it already streamed, which the transcript still shows.
+export function finishedAssistant(message) {
+  if (message.type !== "assistant" || message.time.completed === undefined) return false
+  if (message.error?.type === "aborted") return true
+  return !message.error && message.finish !== "error"
+}
+
 function messageText(message) {
   if (message.type === "user") return message.text
-  if (message.type !== "assistant" || message.time.completed === undefined || message.error || message.finish === "error") return ""
+  if (!finishedAssistant(message)) return ""
   return message.content.filter(part => part.type === "text").map(part => part.text).join("\n\n")
 }
 

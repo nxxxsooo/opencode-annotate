@@ -20,7 +20,31 @@ pub(crate) struct Config {
     pub(crate) herdr: HerdrConfig,
     pub(crate) ui: UiConfig,
     pub(crate) keys: Keymap,
+    /// Before `colors`: the plugin's theme copy relies on `[colors]` serializing last.
+    pub(crate) prompts: Prompts,
     pub(crate) colors: Colors,
+}
+
+/// The default `[prompts] what`: how the agent should answer the review's `what?` notes.
+pub(crate) const DEFAULT_WHAT_PROMPT: &str = concat!(
+    "The annotations that say \"what?\" mark passages I don't understand. For each one, ",
+    "explain it in plain language with more detail and a concrete example where it helps, ",
+    "and say how it relates to our current task. If an action is pending, hold it until I confirm."
+);
+
+/// Instructions added to sent feedback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct Prompts {
+    /// Sent once after the notes when any of them is a `what?` note; empty sends the notes
+    /// alone.
+    pub(crate) what: String,
+}
+
+impl Default for Prompts {
+    fn default() -> Self {
+        Self { what: DEFAULT_WHAT_PROMPT.to_owned() }
+    }
 }
 
 /// Which palette the app starts from; `[colors]` adjusts individual roles of it.
@@ -269,6 +293,18 @@ mod tests {
     fn roundtrips_through_toml() {
         let text = Config::default().to_toml().expect("serializes");
         assert_eq!(Config::parse(&text).expect("parses"), Config::default());
+    }
+
+    #[test]
+    fn the_what_prompt_is_configurable_and_colors_still_serialize_last() {
+        assert_eq!(Config::default().prompts.what, DEFAULT_WHAT_PROMPT);
+        let config = Config::parse("[prompts]\nwhat = \"Explain it simply.\"\n").expect("parses");
+        assert_eq!(config.prompts.what, "Explain it simply.");
+        assert_eq!(config.ui, UiConfig::default());
+        let text = config.to_toml().expect("serializes");
+        let colors = text.rfind("\n[colors]\n").expect("colors table");
+        assert!(text.find("\n[prompts]\n").is_some_and(|prompts| prompts < colors), "{text}");
+        assert!(text[colors + 1..].lines().skip(1).all(|line| !line.starts_with('[')), "{text}");
     }
 
     #[test]

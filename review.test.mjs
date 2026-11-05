@@ -46,14 +46,14 @@ test("an interrupted reply keeps its streamed text selectable", async () => {
   assert.equal(selectReply([{ ...interrupted, time: { created: 500 } }]), undefined)
 })
 
-function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message, route: initialRoute } = {}) {
+function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message, route: initialRoute, pluginOptions = {}, skills = ["what"] } = {}) {
   let route = initialRoute ?? { type: "session", sessionID: "ses_original" }
-  const sent = [], transitions = [], notices = [], created = [], navigations = []
+  const sent = [], transitions = [], notices = [], created = [], navigations = [], skillLists = []
   let confirmationCount = 0
   let pages = 0
   let gets = 0
   const ctx = {
-    options: {}, themeMode: "dark", location: { directory: "/wrong-client-directory" },
+    options: pluginOptions, themeMode: "dark", location: { directory: "/wrong-client-directory" },
     renderer: {
       listeners: new Map(),
       on(name, listener) { this.listeners.set(name, listener) },
@@ -77,7 +77,10 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
         },
       },
     } },
-    client: { message: { async list(input, options) {
+    client: { skill: { async list(input) {
+      skillLists.push(input)
+      return { data: skills.map(id => ({ id, name: id })) }
+    } }, message: { async list(input, options) {
       assert.equal(input.sessionID, "ses_original")
       assert.equal(input.type, "assistant")
       // Compressed history pages are slow enough to stall /annotate.
@@ -132,7 +135,7 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
     },
   }
   return {
-    ctx, sent, transitions, notices, created, navigations,
+    ctx, sent, transitions, notices, created, navigations, skillLists,
     confirmations: () => confirmationCount, pages: () => pages, gets: () => gets,
     setStatus: value => { status = value },
     setRoute: value => { route = value },
@@ -164,7 +167,7 @@ async function harness(t, options = {}) {
       if (options.failTerminal) throw new Error("Terminal child failed")
       if (!options.empty) {
         // Exercise the bundled binary's real JSON store and export contract.
-        execFileSync(input.binary, ["--annotate", input.file, "Alpha paragraph.", "请补充具体例子。", "comment"], {
+        execFileSync(input.binary, ["--annotate", input.file, "Alpha paragraph.", options.note ?? "请补充具体例子。", "comment"], {
           env: input.env, cwd: input.cwd,
         })
         if (options.archived) {
@@ -301,6 +304,41 @@ test("an automatic trigger never overlaps an existing review", async t => {
   await manual
   assert.deepEqual(h.transitions, ["suspend", "resume", "render"])
   assert.deepEqual(h.notices.map(n => n.message), ["No annotations. Returned to the session."])
+})
+
+test("what? notes ask once for an explanation and attach the what skill", async t => {
+  const h = await harness(t, { note: "what?", sessionDir: "/project" })
+  await h.command.run()
+  assert.equal(h.sent.length, 1)
+  assert.deepEqual(h.sent[0].skills, [{ id: "what" }])
+  assert.match(h.sent[0].text, /Comment on: "Alpha paragraph\."\n> what\?\n/)
+  assert.equal(h.sent[0].text.match(/^# What\? notes$/gm)?.length, 1)
+  assert.match(h.sent[0].text, /explain it in plain language/)
+  assert.deepEqual(h.skillLists, [{ location: { directory: "/project" } }], "skills come from the captured session's project")
+})
+
+test("the what skill is attached only when a what? note is sent and the skill exists", async t => {
+  for (const [options, skills] of [
+    [{}, undefined],
+    [{ note: "what?", skills: [] }, undefined],
+    [{ note: "what?", pluginOptions: { whatSkill: false } }, undefined],
+    [{ note: "what?", pluginOptions: { whatSkill: "explain" }, skills: ["what", "explain"] }, [{ id: "explain" }]],
+  ]) {
+    const h = await harness(t, options)
+    await h.command.run()
+    assert.equal(h.sent.length, 1, JSON.stringify(options))
+    assert.deepEqual(h.sent[0].skills, skills, JSON.stringify(options))
+    if (!options.note || options.pluginOptions?.whatSkill === false) assert.deepEqual(h.skillLists, [])
+  }
+})
+
+test("a configured what skill that is missing keeps the feedback instead of sending", async t => {
+  const h = await harness(t, { note: "what?", pluginOptions: { whatSkill: "explain" } })
+  await h.command.run()
+  assert.deepEqual(h.sent, [])
+  assert.match(h.notices.at(-1).message, /Can't find the "explain" skill set as whatSkill[\s\S]*feedback\.md/)
+  assert.equal(h.confirmations(), 0, "the error comes before asking to send")
+  assert.equal((await readdir(h.root)).length, 1, "the draft is kept")
 })
 
 test("sending from the TUI delivers without a second confirmation", async t => {

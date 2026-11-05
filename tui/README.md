@@ -38,6 +38,9 @@ max_width = 168
 doc_width = 120
 ```
 
+`[prompts] what` is the instruction feedback adds once when it contains `what?` notes;
+an empty string sends the notes alone. `annotate-tui config` prints the default.
+
 Hosted reviews write their send intent for the adapter: `q` sends notes and returns,
 `Ctrl+S` also saves an open comment, and `Ctrl+C` returns to the adapter's confirmation.
 The adapters own session targeting and delivery. Markdown labels such as `**题库：**把`

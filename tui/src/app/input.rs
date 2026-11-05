@@ -7,8 +7,7 @@ use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind, MouseButton, Mous
 use super::compose::ComposeAction;
 use super::menu::ReviewAction;
 use super::send::SendState;
-use super::{App, Focus, GUTTER, Mode, Pending, TOOLBAR};
-use crate::delivery::Delivery as _;
+use super::{App, Focus, GUTTER, Mode, Pending, TOOLBAR, Tool};
 use crate::keys::{self, Action};
 
 impl App {
@@ -214,9 +213,9 @@ impl App {
         // With a selection waiting, the toolbar keys win.
         if self.pending.is_some()
             && let Some(action) = self.keys.action(&key, keys::TOOLBAR)
-            && let Some(&(_, _, _, kind)) = TOOLBAR.iter().find(|item| item.2 == action)
+            && let Some(&(_, _, _, tool)) = TOOLBAR.iter().find(|item| item.2 == action)
         {
-            return self.act(kind);
+            return self.act(tool);
         }
         // Visual mode: the selection follows the cursor.
         if self.selection.is_some_and(|s| s.dragging) {
@@ -273,7 +272,7 @@ impl App {
                     (self.open.doc.blocks.get(self.selected), self.open.layout.blocks.get(self.selected))
                 {
                     self.pending = Some(Pending { range: block.range.clone(), at: (rendered.first_row, 0) });
-                    self.act(Kind::Comment)?;
+                    self.act(Tool::Mark(Kind::Comment))?;
                 }
             }
             Some(Action::ClearBlock) => {
@@ -450,8 +449,8 @@ impl App {
                     self.undo_finish_review();
                     return Ok(());
                 }
-                if let Some(kind) = self.toolbar_hit(mouse.column, mouse.row) {
-                    return self.act(kind);
+                if let Some(tool) = self.toolbar_hit(mouse.column, mouse.row) {
+                    return self.act(tool);
                 }
                 if let Some(index) = self.tree_hit(mouse.row, mouse.column) {
                     self.tree_cursor = index;
@@ -521,12 +520,14 @@ impl App {
             .is_some_and(|rect| row == rect.y && column >= rect.x && column < rect.right())
     }
 
-    fn toolbar_hit(&self, column: u16, row: u16) -> Option<Kind> {
-        let (rect, spans) = self.geometry.toolbar.as_ref()?;
-        if row != rect.y || column < rect.x || column >= rect.right() {
-            return None;
-        }
-        spans.iter().zip(TOOLBAR.iter()).find(|(span, _)| span.contains(&column)).map(|(_, item)| item.3)
+    fn toolbar_hit(&self, column: u16, row: u16) -> Option<Tool> {
+        self.geometry
+            .toolbar
+            .as_ref()?
+            .iter()
+            .zip(TOOLBAR.iter())
+            .find(|(rect, _)| rect.contains((column, row).into()))
+            .map(|(_, item)| item.3)
     }
 
     /// Whether the screen cell is inside the drawn tree pane.
@@ -600,11 +601,6 @@ impl App {
         let source = &self.open.doc.source;
         let end_char = source.get(hi..).and_then(|s| s.chars().next()).map_or(1, char::len_utf8);
         let range = lo..hi + end_char;
-        if self.clipboard
-            && let Some(text) = source.get(range.clone())
-        {
-            let _ = crate::delivery::Clipboard.deliver(text);
-        }
         if let Some(block) = self.open.doc.block_containing(range.start) {
             self.selected = block;
         }

@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, glyph, label};
+use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, Tool, glyph, label};
 use crate::keys::Action;
 use crate::theme::palette;
 use crate::wrap::wrap_line;
@@ -29,6 +29,14 @@ fn accent(kind: Kind) -> Color {
         Kind::Comment => palette().comment,
         Kind::LooksGood => palette().looks_good,
         Kind::Delete => palette().delete,
+    }
+}
+
+fn tool_accent(tool: Tool) -> Color {
+    match tool {
+        Tool::Mark(kind) => accent(kind),
+        Tool::What => palette().comment,
+        Tool::Copy => palette().accent,
     }
 }
 
@@ -251,21 +259,37 @@ impl App {
                 key => format!(" {g} {l} ({key}) "),
             })
             .collect();
-        let width: u16 = labels.iter().map(|l| l.width() as u16).sum::<u16>() + 1;
-        let Some(rect) = self.float_origin(1, width) else { return };
+        let doc = self.geometry.doc;
+        if doc.width <= 1 || doc.height == 0 {
+            return;
+        }
+        let mut items = TOOLBAR.map(|_| Rect::default());
+        let (mut x, mut y, mut width) = (1, 0, 0);
+        for (label, item) in labels.iter().zip(items.iter_mut()) {
+            let w = (label.width() as u16).min(doc.width - 1);
+            if x > 1 && x + w > doc.width {
+                x = 1;
+                y += 1;
+            }
+            *item = Rect::new(x, y, w, 1);
+            x += w;
+            width = width.max(x);
+        }
+        let Some(rect) = self.float_origin((y + 1).min(doc.height), width) else { return };
         frame.render_widget(Clear, rect);
         let buf = frame.buffer_mut();
         buf.set_style(rect, Style::new().bg(palette().toolbar_bg));
-        let mut x = rect.x + 1;
-        let mut spans = [0..0, 0..0, 0..0];
-        for ((label, item), span) in labels.iter().zip(TOOLBAR.iter()).zip(spans.iter_mut()) {
-            let w = label.width() as u16;
-            let style = Style::new().fg(accent(item.3)).bg(palette().toolbar_bg).bold();
-            buf.set_span(x, rect.y, &Span::styled(label.as_str(), style), w);
-            *span = x..x + w;
-            x += w;
+        for ((label, tool), item) in labels.iter().zip(TOOLBAR.iter()).zip(items.iter_mut()) {
+            if item.y >= rect.height {
+                *item = Rect::default();
+                continue;
+            }
+            item.x += rect.x;
+            item.y += rect.y;
+            let style = Style::new().fg(tool_accent(tool.3)).bg(palette().toolbar_bg).bold();
+            buf.set_span(item.x, item.y, &Span::styled(label.as_str(), style), item.width);
         }
-        self.geometry.toolbar = Some((rect, spans));
+        self.geometry.toolbar = Some(items);
     }
 
     /// The compose box: at the pending selection when there is one, else over the rail
@@ -471,7 +495,9 @@ impl App {
             _ if self.pending.is_some() => vec![
                 key(Action::LooksGood, "looks good"),
                 key(Action::Comment, "comment"),
+                key(Action::What, "what?"),
                 key(Action::Delete, "delete"),
+                key(Action::Copy, "copy"),
                 key(Action::Back, "clear"),
             ],
             Focus::Tree => vec![

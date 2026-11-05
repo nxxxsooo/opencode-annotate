@@ -30,8 +30,8 @@ use anyhow::{Context, Result};
 use plannotator_tui_schema::{DocumentSource, Kind, Provenance};
 use ratatui::layout::Rect;
 
-use crate::config::UiConfig;
-use crate::delivery::Delivery;
+use crate::config::{Prompts, UiConfig};
+use crate::delivery::{Clipboard, Delivery};
 use crate::doc::Document;
 use crate::keys::{Action, Keymap};
 use crate::layout::DocLayout;
@@ -44,11 +44,26 @@ use send::SendState;
 /// Width of the marker column left of the document.
 pub(super) const GUTTER: u16 = 2;
 
-/// Toolbar items in display order: (glyph, label, key, kind).
-const TOOLBAR: [(&str, &str, Action, Kind); 3] = [
-    ("👍", "looks good", Action::LooksGood, Kind::LooksGood),
-    ("💬", "comment", Action::Comment, Kind::Comment),
-    ("✗", "delete", Action::Delete, Kind::Delete),
+/// The body of a `what?` note; sent feedback adds `[prompts] what` once for all of them.
+pub(super) const WHAT: &str = "what?";
+
+/// What a toolbar item does with the pending selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Mark(Kind),
+    /// Save a clarification comment without opening the composer.
+    What,
+    /// Copy the selected source to the clipboard; the selection stays for annotating.
+    Copy,
+}
+
+/// Toolbar items in display order: (glyph, label, key, tool).
+const TOOLBAR: [(&str, &str, Action, Tool); 5] = [
+    ("👍", "looks good", Action::LooksGood, Tool::Mark(Kind::LooksGood)),
+    ("💬", "comment", Action::Comment, Tool::Mark(Kind::Comment)),
+    ("❓", "what?", Action::What, Tool::What),
+    ("✗", "delete", Action::Delete, Tool::Mark(Kind::Delete)),
+    ("⧉", "copy", Action::Copy, Tool::Copy),
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -83,8 +98,8 @@ enum Focus {
 struct Geometry {
     tree: Rect,
     doc: Rect,
-    /// Toolbar rect and the column span of each item, in screen coordinates.
-    toolbar: Option<(Rect, [Range<u16>; 3])>,
+    /// Each toolbar item's screen rect, including wrapped rows.
+    toolbar: Option<[Rect; TOOLBAR.len()]>,
     /// Screen rects of the rail bubbles drawn last frame, with their annotation ids.
     bubbles: Vec<(Rect, String)>,
     /// The header's Send button; `None` when the header was too narrow for it.
@@ -199,13 +214,15 @@ pub(crate) struct App {
     pub(crate) keys: Keymap,
     /// `[ui]` from the config: the centered viewport and the document width.
     pub(crate) ui: UiConfig,
+    /// `[prompts]` from the config: instructions added to sent feedback.
+    pub(crate) prompts: Prompts,
     /// The last primary-button press, for double-click detection.
     last_click: Option<(std::time::Instant, u16, u16)>,
     geometry: Geometry,
     status: Option<String>,
     frame_ms: f64,
     frame_max_ms: f64,
-    /// Copy selections to the terminal clipboard (off for headless runs).
+    /// Allow clipboard copies through the terminal (off for headless runs).
     pub(crate) clipboard: bool,
     /// Where a host waits to hear that the notes should be sent; see `host`.
     pub(crate) send_intent: Option<PathBuf>,
@@ -273,6 +290,7 @@ impl App {
             shift_enter: false,
             keys: Keymap::default(),
             ui: UiConfig::default(),
+            prompts: Prompts::default(),
             last_click: None,
             geometry: Geometry::default(),
             status: None,
@@ -447,17 +465,30 @@ impl App {
     }
 
     /// Apply a toolbar action to the pending selection.
-    fn act(&mut self, kind: Kind) -> Result<()> {
+    fn act(&mut self, tool: Tool) -> Result<()> {
         let Some(pending) = self.pending.clone() else { return Ok(()) };
-        match kind {
-            Kind::Comment => {
+        match tool {
+            Tool::Mark(Kind::Comment) => {
                 self.mode = Mode::Compose;
                 self.compose = Compose::default();
             }
-            Kind::LooksGood | Kind::Delete => {
+            Tool::Mark(kind @ (Kind::LooksGood | Kind::Delete)) => {
                 self.annotate(pending.range, kind, String::new())?;
                 self.clear_selection();
                 self.status = Some(format!("{} saved", label(kind)));
+            }
+            Tool::What => {
+                self.annotate(pending.range, Kind::Comment, WHAT.to_owned())?;
+                self.clear_selection();
+                self.status = Some("what? saved".to_owned());
+            }
+            Tool::Copy => {
+                let text = self.open.doc.source.get(pending.range).unwrap_or_default();
+                self.status = Some(if self.clipboard && Clipboard.deliver(text).is_ok() {
+                    format!("copied {} characters", text.chars().count())
+                } else {
+                    "clipboard unavailable".to_owned()
+                });
             }
         }
         Ok(())

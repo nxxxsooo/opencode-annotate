@@ -114,7 +114,9 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         Some("--bench") => bench(&path(1)?),
         Some("--export") => {
             let target = path(1)?;
-            let app = open_app(&target, 100, false)?;
+            let mut app = open_app(&target, 100, false)?;
+            // As in the interactive viewer, a config that fails to parse keeps the defaults.
+            app.prompts = Config::load().unwrap_or_default().prompts;
             print!("{}", if target.is_dir() { app.folder_feedback()? } else { app.feedback() });
             Ok(())
         }
@@ -359,6 +361,7 @@ pub(crate) fn run_ui(build: impl FnOnce(usize) -> Result<App>) -> Result<()> {
         app.shift_enter = shift_enter;
         app.keys = config.keys;
         app.ui = config.ui;
+        app.prompts = config.prompts;
         app.send_intent = crate::app::host::send_intent();
         app.input_source = crate::app::input_source::InputSource::from_env();
         event_loop(&mut terminal, app)

@@ -2,12 +2,13 @@
 //! Folder counts are cached on open/change/reload, never read from disk while drawing.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use plannotator_tui_schema::{Kind, Provenance};
 
-use super::App;
+use super::{App, WHAT};
 use crate::archive::AnnotationRecord;
 use crate::doc::Document;
 use crate::export;
@@ -114,6 +115,18 @@ impl Feedback {
 
     fn exported_text(self) -> String {
         if self.text.is_empty() { "No annotations.".to_owned() } else { self.text }
+    }
+
+    /// One instruction after all the notes, when any of them is a `what?` note.
+    fn ask_what(&mut self, prompt: &str) {
+        let prompt = prompt.trim();
+        let asks = self
+            .annotations
+            .iter()
+            .any(|a| a.kind.as_deref() == Some("comment") && a.text.as_deref().map(str::trim) == Some(WHAT));
+        if !prompt.is_empty() && asks {
+            let _ = write!(self.text, "# What? notes\n\n{prompt}\n");
+        }
     }
 }
 
@@ -255,6 +268,12 @@ impl App {
     }
 
     pub(super) fn prepare_feedback(&self, scope: SendScope) -> Result<Feedback> {
+        let mut feedback = self.collect_feedback(scope)?;
+        feedback.ask_what(&self.prompts.what);
+        Ok(feedback)
+    }
+
+    fn collect_feedback(&self, scope: SendScope) -> Result<Feedback> {
         let Some(tree) = &self.tree else {
             if !self.pick_cache.is_empty() {
                 return Ok(self.reply_feedback(scope));
@@ -286,7 +305,9 @@ impl App {
 
     /// Headless export retains the full active review and does not record a delivery.
     pub(crate) fn feedback(&self) -> String {
-        self.file_feedback(SendScope::All).exported_text()
+        let mut feedback = self.file_feedback(SendScope::All);
+        feedback.ask_what(&self.prompts.what);
+        feedback.exported_text()
     }
 
     pub(crate) fn folder_feedback(&self) -> Result<String> {

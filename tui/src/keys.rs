@@ -49,9 +49,11 @@ pub(crate) enum Action {
     Visual,
     MoveCursor,
     Comment,
+    What,
     ClearBlock,
     LooksGood,
     Delete,
+    Copy,
     Yes,
     No,
 }
@@ -91,7 +93,7 @@ pub(crate) const MOTION: &[Action] = &[Left, Right, Down, Up, WordForward, WordB
 /// While a keyboard selection grows; any other key is a motion.
 pub(crate) const VISUAL: &[Action] = &[Back, Confirm, Visual];
 /// While a finished selection waits for its kind.
-pub(crate) const TOOLBAR: &[Action] = &[LooksGood, Comment, Delete];
+pub(crate) const TOOLBAR: &[Action] = &[LooksGood, Comment, Action::What, Delete, Action::Copy];
 pub(crate) const CONFIRM_QUIT: &[Action] = &[Yes, Confirm, No, Back];
 pub(crate) const MENU: &[Action] =
     &[Down, Up, Confirm, Back, ReviewMenu, Interrupt, ResendAll, FinishReview, UndoFinish, Archive];
@@ -246,9 +248,11 @@ const DEFAULTS: &[(Action, &[Key])] = &[
     (Visual, &[ch('v')]),
     (MoveCursor, &[ch('i')]),
     (Comment, &[ch('c')]),
+    (Action::What, &[ch('w')]),
     (ClearBlock, &[ch('x')]),
     (LooksGood, &[ch('a')]),
     (Delete, &[ch('d')]),
+    (Action::Copy, &[ch('y')]),
     (Yes, &[ch('y'), ch('Y')]),
     (No, &[ch('n'), ch('N')]),
 ];
@@ -393,9 +397,11 @@ impl Action {
             Self::Visual => "visual",
             Self::MoveCursor => "move-cursor",
             Self::Comment => "comment",
+            Self::What => "what",
             Self::ClearBlock => "clear-block",
             Self::LooksGood => "looks-good",
             Self::Delete => "delete",
+            Self::Copy => "copy",
             Self::Yes => "yes",
             Self::No => "no",
         }

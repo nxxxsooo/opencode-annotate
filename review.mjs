@@ -135,6 +135,24 @@ async function archivedNotes(data) {
   return count
 }
 
+// A "what?" note asks for an explanation. The configured skill (default: what) can hold
+// pending work while the agent explains; without it, the TUI's instruction stands alone.
+const whatNote = /^Comment on: .*\n> what\?$/m
+
+async function whatSkills(client, option, feedback, sessionID, signal) {
+  if (option === false || !whatNote.test(feedback)) return []
+  if (option !== undefined && (typeof option !== "string" || !option.trim())) {
+    throw new Error('Set the whatSkill option to a skill ID or false.')
+  }
+  const id = option?.trim() ?? "what"
+  const session = await client.session.get({ sessionID }, { signal })
+  const directory = session.location?.directory
+  const { data } = await client.skill.list(directory ? { location: { directory } } : {}, { signal })
+  if (data.some(skill => skill.id === id)) return [{ id }]
+  if (option !== undefined) throw new Error(`Can't find the "${id}" skill set as whatSkill. Install it, or set whatSkill to false.`)
+  return []
+}
+
 async function interactive({ binary, file, cwd, env, signal }) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Run /annotate in the full OpenCode terminal interface.")
@@ -270,6 +288,7 @@ export function createReviewCommand(context, options = {}) {
       const feedbackPath = path.join(directory, "feedback.md")
       await writeFile(feedbackPath, text, { mode: 0o600 })
       const count = (feedback.match(/^## Annotation /gm) ?? []).length
+      const skills = await whatSkills(context.client, context.options.whatSkill, feedback, sessionID, controller.signal)
       const intent = await readFile(intentPath, "utf8").catch(error => {
         if (error.code === "ENOENT") return ""
         throw error
@@ -291,6 +310,7 @@ export function createReviewCommand(context, options = {}) {
       const busy = (context.data.session.status?.(sessionID) ?? "running") !== "idle"
       await context.client.session.prompt({
         sessionID, id: promptID, text, delivery: busy ? "queue" : "steer", resume: true,
+        ...(skills.length ? { skills } : {}),
       })
       keepDraft = archived > 0
       notice(`Sent ${count} ${count === 1 ? "annotation" : "annotations"}.${retainedArchive}`, "success")

@@ -521,6 +521,56 @@ fn double_clicking_a_block_offers_the_toolbar_for_the_whole_block() {
 }
 
 #[test]
+fn copying_is_an_explicit_toolbar_action_that_keeps_the_selection() {
+    let mut app = app(Box::new(Discard));
+    draw(&mut app);
+    let (col, row) = (5, 3);
+    app.handle_event(&click_at(col, row)).expect("first click");
+    app.handle_event(&click_at(col, row)).expect("second click");
+    let rows = draw(&mut app);
+    assert!(rows.iter().any(|r| r.contains("copy (y)")), "toolbar offers copy: {rows:?}");
+    assert_eq!(app.status, None, "selecting alone copies nothing");
+    let placed_before = app.open.store.placed().len();
+    app.handle_event(&key(KeyCode::Char('y'), KeyModifiers::NONE)).expect("copy");
+    // Headless apps never reach the terminal clipboard, so the copy reports why.
+    assert_eq!(app.status.as_deref(), Some("clipboard unavailable"));
+    assert!(app.pending.is_some(), "the selection stays for annotating");
+    assert_eq!(app.open.store.placed().len(), placed_before, "copying saves no annotation");
+}
+
+#[test]
+fn what_saves_a_short_note_and_the_feedback_explains_it_once() {
+    let mut app = app(Box::new(Discard));
+    draw(&mut app);
+    app.handle_event(&click_at(5, 3)).expect("first click");
+    app.handle_event(&click_at(5, 3)).expect("second click");
+    draw(&mut app);
+    app.handle_event(&key(KeyCode::Char('w'), KeyModifiers::NONE)).expect("what");
+    assert_eq!(app.status.as_deref(), Some("what? saved"));
+    assert!(app.pending.is_none(), "the note closes the toolbar");
+    assert_eq!(
+        app.open.store.placed().iter().map(|p| p.annotation.body.as_str()).collect::<Vec<_>>(),
+        ["what?"]
+    );
+    app.add_block_annotation(0, Kind::Comment, "what?".to_owned()).expect("second what");
+    let text = app.feedback();
+    assert_eq!(text.matches("\n> what?\n").count(), 2, "{text}");
+    assert_eq!(text.matches("# What? notes").count(), 1, "{text}");
+    assert!(text.ends_with(&format!("# What? notes\n\n{}\n", crate::config::DEFAULT_WHAT_PROMPT)), "{text}");
+    app.prompts.what = "Explain it simply.".to_owned();
+    assert!(app.feedback().ends_with("# What? notes\n\nExplain it simply.\n"));
+    app.prompts.what = String::new();
+    assert!(!app.feedback().contains("What? notes"), "an empty prompt sends the notes alone");
+}
+
+#[test]
+fn ordinary_comments_add_no_what_instruction() {
+    let mut app = app(Box::new(Discard));
+    app.add_block_annotation(0, Kind::Comment, "what? and why?".to_owned()).expect("comment");
+    assert!(!app.feedback().contains("What? notes"));
+}
+
+#[test]
 fn a_comment_can_span_lines_and_enter_saves_it() {
     let mut app = app(Box::new(Discard));
     draw(&mut app);

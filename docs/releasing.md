@@ -1,5 +1,27 @@
 # Releasing
 
+## 0.11.0 release baseline — 2026-11-05
+
+This minor release adds **what?** (`w`) to the TUI selection toolbar and makes copying
+explicit. A `what?` note stays short; sent feedback adds one instruction for all of them
+(`[prompts] what` in `tui.toml`) and, when OpenCode has the skill, attaches `what`
+(`whatSkill` option: another skill ID or `false`). Selecting no longer writes the clipboard;
+`y` or **copy** does. Toolbar items wrap in narrow panes.
+
+| Surface | Release contract |
+|---|---|
+| Source | `14b417b` (feature) and `3db4059` (release) on `main`, built from a clean worktree at `535dace` that excluded the unreleased browser, command and `/ref` work; CI run 41956061750 passed. |
+| GitHub Release | `v0.11.0` at `3db40592b758413e8c102e7817cd0b2a7ebe1cfb`, with the matching changelog and install/update commands. |
+| npm | `@nxxxsooo/opencode-annotate@0.11.0` is `latest`, published with signed provenance by `publish.yml` run 41956311838 with `gitHead` `3db4059`. |
+| Skill | The companion `what` skill in `nxxxsooo/loop` (`596ebe3` on `main`) explains annotated `what?` passages; the maintainer's global copy was refreshed from it. A live OpenCode server resolved the skill attachment into the queued prompt in an isolated session without a model turn. |
+| Maintainer install | Still the local checkout in `opencode.jsonc`, which contains this release plus the unreleased work. Switch back to `@nxxxsooo/opencode-annotate@latest` once that work is released or shelved, preserving options. |
+| Local checks | 84 Node tests, Rust formatting/Clippy/261 workspace tests, package dry-run and 21 isolated OpenCode smoke scenarios passed. A headless tmux run verified keyboard, mouse, rebinding and narrow-pane toolbar wrapping. |
+| Previous release | `v0.10.4` at `11cf77c14f7f55e4bfbc101634bc16de7cb10e71` (interrupted replies). |
+
+The version-specific receipt is `.local/releases/0.11.0-state.json`. The unpublished
+October 29 `0.11.0` preparation was superseded by 0.10.1; its records are kept as
+`.local/releases/0.11.0-superseded-20261029-*`.
+
 ## 0.10.4 release baseline — 2026-11-03
 
 This patch makes an interrupted reply (finish `error` with an `aborted` error, for example
@@ -25,8 +47,8 @@ evidence. Publishing and local installation must each be verified before marking
 | Keep automatic review in the 0.10 series; use the pending 0.10.1 for this fix. | `auto-review-release-series` in [`sources.json`](../sources.json). |
 | Ship the blank-home fix after real user testing. | `blank-home-web-acceptance` in [`sources.json`](../sources.json). |
 
-Published tags and npm versions remain immutable. The intermediate `0.11.0`
-preparation was superseded before publication.
+Published tags and npm versions remain immutable. The intermediate October 29 `0.11.0`
+preparation was superseded before publication; the published 0.11.0 is the November 5 release.
 
 Private recovery material lives under `.local/retired/20261029-plannotator-tui/` (verified
 Git bundle, retained local-only evidence and deletion receipt). `.local/releases/` contains

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0 — what? notes and explicit copy
+
+- Add **what?** (`w`) to the text-selection toolbar to mark a passage you don't
+  understand in one step. Sent feedback adds one instruction for all `what?` notes,
+  configurable under `[prompts] what` in `tui.toml`, and attaches the `what` skill when
+  OpenCode has one (`whatSkill` chooses another skill or `false`).
+- Selecting text no longer overwrites the clipboard. Press `y` or click **copy** to copy
+  the selected source; the selection stays for annotating.
+- Toolbar options wrap in narrow panes and remain clickable.
+
 ## 0.10.4 — interrupted replies
 
 - Let `/annotate`, `/annotate-pick` and `/ref` use the text of an interrupted reply, such

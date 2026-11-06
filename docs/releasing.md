@@ -13,9 +13,9 @@ explicit. A `what?` note stays short; sent feedback adds one instruction for all
 | Source | `14b417b` (feature) and `3db4059` (release) on `main`, built from a clean worktree at `535dace` that excluded the unreleased browser, command and `/ref` work; CI run 41956061750 passed. |
 | GitHub Release | `v0.11.0` at `3db40592b758413e8c102e7817cd0b2a7ebe1cfb`, with the matching changelog and install/update commands. |
 | npm | `@nxxxsooo/opencode-annotate@0.11.0` is `latest`, published with signed provenance by `publish.yml` run 41956311838 with `gitHead` `3db4059`. |
-| Skill | The companion `what` skill in `nxxxsooo/loop` (`596ebe3` on `main`) explains annotated `what?` passages; the maintainer's global copy was refreshed from it. A live OpenCode server resolved the skill attachment into the queued prompt in an isolated session without a model turn. |
+| Skill | The companion `what` skill in `nxxxsooo/loop` explains annotated `what?` passages; it shipped in loop `v3.4.0` (`596ebe3`), and the maintainer's global loop skills were refreshed to that release. A live OpenCode server resolved the skill attachment into the queued prompt in an isolated session without a model turn. |
 | Maintainer install | Still the local checkout in `opencode.jsonc`, which contains this release plus the unreleased work. Switch back to `@nxxxsooo/opencode-annotate@latest` once that work is released or shelved, preserving options. |
-| Local checks | 84 Node tests, Rust formatting/Clippy/261 workspace tests, package dry-run and 21 isolated OpenCode smoke scenarios passed. A headless tmux run verified keyboard, mouse, rebinding and narrow-pane toolbar wrapping. |
+| Local checks | 84 Node tests, Rust formatting/Clippy/261 workspace tests, package dry-run and 21 isolated OpenCode smoke scenarios passed. A headless tmux run verified keyboard, mouse, rebinding and narrow-pane toolbar wrapping. On November 6 a real `what?` send from the maintainer's daily session arrived with the `what` skill loaded before the feedback, the quoted passage and one instruction section. |
 | Previous release | `v0.10.4` at `11cf77c14f7f55e4bfbc101634bc16de7cb10e71` (interrupted replies). |
 
 The version-specific receipt is `.local/releases/0.11.0-state.json`. The unpublished

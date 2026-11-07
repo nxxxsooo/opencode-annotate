@@ -1,5 +1,23 @@
 # Releasing
 
+## 0.11.1 release baseline — 2026-11-08
+
+This patch fixes cursor movement in the TUI comment/edit box. Up/Down move by wrapped row
+instead of only between typed newlines. Cmd+Left/Right (Super+arrow, Ctrl+A/Ctrl+E, Home/End)
+go to the line start or end, Cmd+Up/Down to the comment start or end, and Option+Left/Right
+(Alt+B/Alt+F, Ctrl+arrows) by word. Options, key bindings and stored annotations are unchanged.
+
+| Surface | Release contract |
+|---|---|
+| Source | `2acf3b3` (fix) and `70324dc` (release) on `main`, built from a clean worktree at `3a99fe1` that excluded the unreleased browser, command, `/ref` and `tui/hosts` work; CI run 42390938027 passed all five native builds and package checks. |
+| GitHub Release | `v0.11.1` at `70324dcabc25efa7162af9014adff331d319625f`, with the matching changelog and install/update commands. |
+| npm | `@nxxxsooo/opencode-annotate@0.11.1` is `latest`, published with signed provenance by `publish.yml` run 42391731478 with `gitHead` `70324dc`. |
+| Maintainer install | Still this checkout. `main` was moved to `70324dc` with `git reset --mixed`, keeping the uncommitted work (pre-reset diff in `.local/backups/20261108-pre-0.11.1-checkout.patch`). The checkout cannot build the TUI while `tui/hosts/src/claude/` is deleted but still declared, so `tui/bin/darwin-arm64/annotate-tui` is the release-worktree build (`--version` 0.11.1). |
+| Local checks | Rust formatting/Clippy/workspace tests (4 new compose tests), 84 Node tests and the package dry-run passed. A headless tmux run of the built binary confirmed wrapped-row Up, Ctrl+A/Ctrl+E and Alt+B. OpenCode smoke tests were not run; the change is confined to TUI key handling. Real Cmd-key events in Ghostty were not exercised. |
+| Previous release | `v0.11.0` at `3db40592b758413e8c102e7817cd0b2a7ebe1cfb` (what? notes and explicit copy). |
+
+The version-specific receipt is `.local/releases/0.11.1-state.json`.
+
 ## 0.11.0 release baseline — 2026-11-05
 
 This minor release adds **what?** (`w`) to the TUI selection toolbar and makes copying

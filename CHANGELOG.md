@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.1 — comment cursor movement
+
+- Up/Down move the comment and edit cursor across wrapped rows, so long single-paragraph
+  comments are navigable.
+- Cmd+Left/Right jump to the start or end of the line, Cmd+Up/Down to the start or end of
+  the comment, and Option+Left/Right by word. The Ctrl+A/Ctrl+E and Alt+B/Alt+F that macOS
+  terminals send for these keys work the same way.
+
 ## 0.11.0 — what? notes and explicit copy
 
 - Add **what?** (`w`) to the text-selection toolbar to mark a passage you don't

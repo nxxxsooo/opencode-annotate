@@ -10,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::compose::WRAP_WIDTH;
 use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, Tool, glyph, label};
 use crate::keys::Action;
 use crate::theme::palette;
@@ -22,7 +23,7 @@ const RAIL_MIN_TOTAL_WIDTH: u16 = 80;
 const TREE_WIDTH: u16 = 28;
 /// Below this the tree is hidden unless toggled on; Tab still reaches it.
 pub(super) const TREE_MIN_TOTAL_WIDTH: u16 = 120;
-const COMPOSE_WIDTH: u16 = 48;
+const COMPOSE_WIDTH: u16 = WRAP_WIDTH as u16 + 3;
 
 fn accent(kind: Kind) -> Color {
     match kind {
@@ -307,8 +308,7 @@ impl App {
     }
 
     fn draw_compose(&self, frame: &mut Frame, title: &str) {
-        let wrap_width = usize::from(COMPOSE_WIDTH.saturating_sub(3));
-        let (lines, cursor_row, cursor_col) = self.compose.wrapped(wrap_width);
+        let (lines, cursor_row, cursor_col) = self.compose.wrapped(WRAP_WIDTH);
         let content_rows = lines.len().clamp(1, 8);
         let height = content_rows as u16 + 2;
         let rect = self

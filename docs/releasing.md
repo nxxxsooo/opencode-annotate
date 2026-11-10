@@ -1,6 +1,6 @@
 # Releasing
 
-## 0.12.0 release candidate — 2026-11-10
+## 0.12.0 release baseline — 2026-11-10
 
 The user authorized one release for the accepted compact TUI toolbar and Safari companion.
 The candidate is isolated from the mixed development tree at the 0.11.1 release baseline.

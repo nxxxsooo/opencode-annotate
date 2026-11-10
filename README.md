@@ -302,9 +302,11 @@ The manifest version alone cannot identify edits to an unpacked extension.
 3. Press `c` to comment, `w` for **what?**, `a` for “looks good,” or `d` to request deletion.
    **what?** marks a passage you don't understand with a short `what?` note
    ([what? notes](#what-notes)). Without a selection, `c` comments on the current block.
-   Enter saves a comment.
-   Selecting never touches the clipboard; press `y` (or click **copy**) to copy the
-   selected source, and the selection stays for annotating.
+   Enter saves a comment. With a selection waiting, Enter records **Done** (the requested
+   work is finished), and `g` records **Get** (understood). Esc dismisses without a note.
+   The compact toolbar shows approve, comment, Done and Get; `w`, `d` and `y` are keyboard-only.
+   Selecting never touches the clipboard; press `y` to copy the selected source and keep
+   the selection for annotating.
 4. Press **`q`** to send your notes and return to OpenCode.
 
 **`Ctrl+S`** does the same mid-comment, saving the comment first. The header's **Send N back (q)**
@@ -312,6 +314,10 @@ button does the same as `q`.
 **`Ctrl+C`** returns without sending, and OpenCode asks whether to send. `E` and `S` send as well,
 following any `[keys]` rebinding, and the clipboard copy and Review menu (resend, finish, archive) are hidden
 because OpenCode owns delivery.
+
+For real PNG toolbar artwork in a verified Kitty-graphics terminal, see the
+[local image-toolbar configuration](tui/README.md#local-image-toolbar-trial).
+Artwork is user-supplied and not included; unconfigured terminals keep Unicode icons.
 
 ### Chinese and other input methods
 

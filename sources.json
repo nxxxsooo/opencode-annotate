@@ -1,6 +1,30 @@
 {
   "sources": [
     {
+      "id": "real-image-toolbar-trial-20261110",
+      "title": "Render selected local artwork in the native annotation toolbar",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-11-10",
+      "received_at": "2026-11-10",
+      "status": "partial",
+      "local_files": ["tui/README.md"],
+      "quote": "dont just map, i d liketo see it actually in tui",
+      "note": "The user requested actual locally supplied PNGs, then accepted compact one-row sizing and requested original action-colored bold shortcuts. Exact message IDs are not exposed by the harness. Artwork is user-supplied and remains outside source and distributed artifacts; Unicode is the unconfigured default."
+    },
+    {
+      "id": "combined-safari-toolbar-release-20261110",
+      "title": "Release the accepted TUI toolbar and Safari companion together",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-11-10",
+      "received_at": "2026-11-10",
+      "status": "partial",
+      "local_files": ["tui/README.md", "README.md", "docs/releasing.md"],
+      "quote": "跟safari 插件一起发布",
+      "note": "Authorizes combined publication of the accepted compact four-action TUI toolbar (original action-colored bold key hints restored) and Safari's sandboxed local-note/Copy notes companion. Safari acceptance is recorded in OpenCode session ses_e3bb3ee72ffexICs8lpzmvgGkl, November 10, including the user's copied annotation saying '111 worked'. Current release-request message ID is not exposed by the harness. Excludes unrelated unpublished reference, feedback-continuation, Chrome connection/session-picker and command-consolidation changes. Third-party Lark PNGs stay local and are not redistributed."
+    },
+    {
       "id": "tui-source-import",
       "title": "Customized terminal reviewer source snapshot",
       "kind": "source-code",

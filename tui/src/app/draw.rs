@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::compose::WRAP_WIDTH;
-use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, Tool, glyph, label};
+use super::{App, BUTTONS, Focus, GUTTER, Geometry, Mode, TOOLBAR, Tool, glyph, label};
 use crate::keys::Action;
 use crate::theme::palette;
 use crate::wrap::wrap_line;
@@ -37,7 +37,8 @@ fn tool_accent(tool: Tool) -> Color {
     match tool {
         Tool::Mark(kind) => accent(kind),
         Tool::What => palette().comment,
-        Tool::Copy => palette().accent,
+        Tool::Copy | Tool::Get => palette().accent,
+        Tool::Done => palette().looks_good,
     }
 }
 
@@ -253,11 +254,17 @@ impl App {
     }
 
     fn draw_toolbar(&mut self, frame: &mut Frame) {
-        let labels: Vec<String> = TOOLBAR
+        if self.toolbar_images.is_some() {
+            self.draw_image_toolbar(frame);
+            return;
+        }
+        let labels: Vec<String> = TOOLBAR[..BUTTONS]
             .iter()
-            .map(|(g, l, a, _)| match self.keys.hint(*a) {
-                key if key.is_empty() => format!(" {g} {l} "),
-                key => format!(" {g} {l} ({key}) "),
+            .map(|(g, l, a, _)| {
+                let key = self.keys.hint(*a);
+                let key = if key.is_empty() { String::new() } else { format!(" ({key})") };
+                let label = if l.is_empty() { String::new() } else { format!(" {l}") };
+                format!(" {g}{label}{key} ")
             })
             .collect();
         let doc = self.geometry.doc;
@@ -289,6 +296,72 @@ impl App {
             item.y += rect.y;
             let style = Style::new().fg(tool_accent(tool.3)).bg(palette().toolbar_bg).bold();
             buf.set_span(item.x, item.y, &Span::styled(label.as_str(), style), item.width);
+        }
+        self.geometry.toolbar = Some(items);
+    }
+
+    /// One-row artwork with the existing key beside it. Only complete, visible buttons
+    /// get hit targets; a tiny viewport never leaves invisible actions in the document.
+    fn draw_image_toolbar(&mut self, frame: &mut Frame) {
+        let Some(images) = self.toolbar_images.as_ref() else { return };
+        let doc = self.geometry.doc.intersection(frame.area());
+        if doc.height < images.size.height || doc.width == 0 {
+            return;
+        }
+        let labels: Vec<_> = TOOLBAR[..BUTTONS]
+            .iter()
+            .map(|(_, _, action, _)| {
+                let key = self.keys.hint(*action);
+                if key.is_empty() { String::new() } else { format!("({key})") }
+            })
+            .collect();
+        let mut items = TOOLBAR.map(|_| Rect::default());
+        let (mut x, mut y, mut width) = (1, 0, 0);
+        for (label, item) in labels.iter().zip(items.iter_mut()) {
+            let button_width = images.size.width + 1 + label.width() as u16;
+            if button_width + 2 > doc.width {
+                continue;
+            }
+            if x > 1 && x + button_width + 1 > doc.width {
+                x = 1;
+                y += images.size.height;
+            }
+            if y + images.size.height > doc.height {
+                break;
+            }
+            *item = Rect::new(x, y, button_width, images.size.height);
+            x += button_width + 1;
+            width = width.max(x);
+        }
+        if width == 0 {
+            return;
+        }
+        let height = items.iter().map(|item| item.bottom()).max().unwrap_or(0);
+        let Some(rect) = self.float_origin(height, width) else { return };
+        let rect = rect.intersection(doc);
+        frame.render_widget(Clear, rect);
+        frame.buffer_mut().set_style(rect, Style::new().bg(palette().toolbar_bg));
+        for (((label, tool), item), protocol) in
+            labels.iter().zip(TOOLBAR.iter()).zip(items.iter_mut()).zip(&images.protocols)
+        {
+            if item.is_empty() {
+                continue;
+            }
+            item.x += rect.x;
+            item.y += rect.y;
+            if item.intersection(rect) != *item {
+                *item = Rect::default();
+                continue;
+            }
+            let image = Rect::new(item.x, item.y, images.size.width, images.size.height);
+            frame.render_widget(ratatui_image::Image::new(protocol), image);
+            let style = Style::new().fg(tool_accent(tool.3)).bg(palette().toolbar_bg).bold();
+            frame.buffer_mut().set_span(
+                image.right() + 1,
+                item.y,
+                &Span::styled(label.as_str(), style),
+                label.width() as u16,
+            );
         }
         self.geometry.toolbar = Some(items);
     }
@@ -417,6 +490,18 @@ impl App {
         self.geometry.bubbles = bubbles;
     }
 
+    /// The selection's key help names only the actions without a toolbar button; the buttons
+    /// already show their own keys. `done` and `get` save acknowledgements; `Esc` dismisses.
+    fn pending_help(&self) -> Vec<Option<String>> {
+        let key = |action, label| self.keys.labelled(action, label);
+        vec![
+            key(Action::What, "what?"),
+            key(Action::Delete, "delete"),
+            key(Action::Copy, "copy"),
+            key(Action::Back, "dismiss"),
+        ]
+    }
+
     fn draw_footer(&mut self, frame: &mut Frame, mut area: Rect) {
         if self.mode == Mode::ConfirmQuit {
             // The question owns the footer: the browse help would name keys that are not
@@ -492,14 +577,7 @@ impl App {
         // An input method swallows a plain letter but passes a Ctrl chord, so name both.
         let edit = self.keys.labelled_with_chord(Action::Edit, "edit");
         let help: Vec<Option<String>> = match self.focus {
-            _ if self.pending.is_some() => vec![
-                key(Action::LooksGood, "looks good"),
-                key(Action::Comment, "comment"),
-                key(Action::What, "what?"),
-                key(Action::Delete, "delete"),
-                key(Action::Copy, "copy"),
-                key(Action::Back, "clear"),
-            ],
+            _ if self.pending.is_some() => self.pending_help(),
             Focus::Tree => vec![
                 up_down,
                 key(Action::Confirm, "open"),

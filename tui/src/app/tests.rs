@@ -508,10 +508,10 @@ fn double_clicking_a_block_offers_the_toolbar_for_the_whole_block() {
     let (col, row) = (5, 3);
     app.handle_event(&click_at(col, row)).expect("first click");
     let rows = draw(&mut app);
-    assert!(!rows.iter().any(|r| r.contains("looks good")), "no toolbar after one click");
+    assert!(!rows.iter().any(|r| r.contains('👍')), "no toolbar after one click");
     app.handle_event(&click_at(col, row)).expect("second click");
     let rows = draw(&mut app);
-    assert!(rows.iter().any(|r| r.contains("looks good")), "toolbar after a double-click: {rows:?}");
+    assert!(rows.iter().any(|r| r.contains("(enter)")), "toolbar after a double-click: {rows:?}");
     // The toolbar acts on the whole block: the 'a' key approves it.
     let placed_before = app.open.store.placed().len();
     app.handle_event(&key(KeyCode::Char('a'), KeyModifiers::NONE)).expect("approve");
@@ -521,14 +521,262 @@ fn double_clicking_a_block_offers_the_toolbar_for_the_whole_block() {
 }
 
 #[test]
-fn copying_is_an_explicit_toolbar_action_that_keeps_the_selection() {
+fn the_toolbar_is_icon_buttons_and_the_other_actions_stay_in_the_help() {
+    let mut app = app(Box::new(Discard));
+    draw(&mut app);
+    app.handle_event(&click_at(5, 3)).expect("first click");
+    app.handle_event(&click_at(5, 3)).expect("second click");
+    let rows = draw(&mut app);
+    let bar = rows.iter().find(|r| r.contains("(enter)")).expect("toolbar");
+    for button in ["👍", "💬", "✅", "👌", "(a)", "(c)", "(g)"] {
+        assert!(bar.contains(button), "missing {button}: {bar:?}");
+    }
+    assert!(!rows.iter().any(|r| r.contains('❓') || r.contains('⧉')), "no extra buttons: {rows:?}");
+    let footer = rows.last().expect("footer");
+    for hint in ["w what?", "d delete", "y copy", "esc dismiss"] {
+        assert!(footer.contains(hint), "help misses {hint}: {footer:?}");
+    }
+}
+
+fn image_app() -> App {
+    let mut app = app(Box::new(Discard));
+    app.toolbar_images = Some(std::rc::Rc::new(crate::toolbar_images::tests::Fixture::new().load()));
+    app
+}
+
+fn select_image_toolbar(app: &mut App, width: u16, height: u16) {
+    draw_sized(app, width, height);
+    app.select_quote_for_snapshot("first thing").expect("select");
+    draw_sized(app, width, height);
+}
+
+#[test]
+fn image_toolbar_every_artwork_cell_clicks_the_correct_existing_action() {
+    for index in 0..super::BUTTONS {
+        for row in 0..1 {
+            // Both image cells, the intervening space, and every key cell are clickable.
+            let button_width = if index == 2 { 10 } else { 6 };
+            for column in 0..button_width {
+                let mut app = image_app();
+                select_image_toolbar(&mut app, 110, 24);
+                let items = app.geometry.toolbar.expect("visible toolbar");
+                let item = items[index];
+                assert_eq!(item.height, 1);
+                click(&mut app, MouseEventKind::Down(MouseButton::Left), item.x + column, item.y + row);
+                match index {
+                    0 => {
+                        assert_eq!(app.open.store.placed()[0].annotation.anchor.kind(), Kind::LooksGood);
+                        assert!(app.pending.is_none());
+                    }
+                    1 => assert_eq!(app.mode, Mode::Compose),
+                    2 | 3 => {
+                        assert_eq!(
+                            app.open.store.placed()[0].annotation.body,
+                            if index == 2 { "done" } else { "get" }
+                        );
+                        assert!(app.pending.is_none());
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn image_toolbar_wraps_and_short_or_narrow_frames_have_no_invisible_targets() {
+    let mut app = image_app();
+    select_image_toolbar(&mut app, 110, 24);
+    let wide = app.geometry.toolbar.expect("toolbar");
+    assert!(wide[..super::BUTTONS].iter().all(|r| r.y == wide[0].y && r.height == 1));
+    let total_width = wide[3].right() - wide[0].x + 2;
+    assert_eq!(total_width, 33, "one outer cell per side, one cell between buttons");
+    select_image_toolbar(&mut app, 25, 24);
+    let wrapped = app.geometry.toolbar.expect("wrapped");
+    assert!(wrapped[2].y > wrapped[0].y);
+    for width in [1, 5, 12, 20, 25, 50, 80, 110] {
+        for height in [1, 2, 3, 4, 6, 10, 24] {
+            draw_sized(&mut app, width, height);
+            app.select_quote_for_snapshot("first thing").expect("select");
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal.draw(|frame| app.draw(frame)).expect("draw");
+            let buffer = terminal.backend().buffer();
+            if let Some(items) = app.geometry.toolbar {
+                for (index, item) in items.iter().enumerate().filter(|(_, r)| !r.is_empty()) {
+                    assert!(index < super::BUTTONS, "key-only tools never become image targets");
+                    assert_eq!(item.intersection(buffer.area), *item);
+                    assert_eq!(item.intersection(app.geometry.doc), *item);
+                    assert_eq!(item.height, 1);
+                    for y in item.y..item.bottom() {
+                        for x in item.x..item.x + 2 {
+                            assert!(
+                                buffer[(x, y)].symbol().contains('\u{10eeee}'),
+                                "target must contain real image cells: {width}x{height} {item:?}"
+                            );
+                        }
+                    }
+                    assert!(
+                        buffer[(item.x + 3, item.y)].symbol().contains('('),
+                        "visible key beside each target"
+                    );
+                    let key_cell = &buffer[(item.x + 3, item.y)];
+                    let palette = crate::theme::palette();
+                    let accent = match index {
+                        0 | 2 => palette.looks_good,
+                        1 => palette.comment,
+                        3 => palette.accent,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(key_cell.fg, accent);
+                    assert!(key_cell.modifier.contains(ratatui::style::Modifier::BOLD));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn image_toolbar_dismiss_compose_scroll_resize_and_reselect_clear_placements() {
+    let mut app = image_app();
+    let mut terminal = Terminal::new(TestBackend::new(110, 24)).expect("terminal");
+    let has_images = |terminal: &Terminal<TestBackend>| {
+        terminal.backend().buffer().content.iter().any(|cell| cell.symbol().contains('\u{10eeee}'))
+    };
+    for _ in 0..4 {
+        terminal.draw(|frame| app.draw(frame)).expect("layout");
+        app.select_quote_for_snapshot("first thing").expect("select");
+        terminal.draw(|frame| app.draw(frame)).expect("toolbar");
+        assert!(has_images(&terminal));
+        app.handle_event(&key(KeyCode::Esc, KeyModifiers::NONE)).expect("dismiss");
+        terminal.draw(|frame| app.draw(frame)).expect("dismissed");
+        assert!(!has_images(&terminal));
+        assert!(app.geometry.toolbar.is_none());
+
+        app.select_quote_for_snapshot("first thing").expect("reselect");
+        terminal.draw(|frame| app.draw(frame)).expect("toolbar");
+        app.handle_event(&key(KeyCode::Char('c'), KeyModifiers::NONE)).expect("compose");
+        terminal.draw(|frame| app.draw(frame)).expect("composer");
+        assert_eq!(app.mode, Mode::Compose);
+        assert!(!has_images(&terminal));
+        assert!(app.geometry.toolbar.is_none());
+        app.handle_event(&key(KeyCode::Esc, KeyModifiers::NONE)).expect("cancel");
+
+        app.select_quote_for_snapshot("first thing").expect("reselect");
+        terminal.draw(|frame| app.draw(frame)).expect("toolbar");
+        app.scroll = 1000;
+        terminal.draw(|frame| app.draw(frame)).expect("offscreen");
+        assert!(!has_images(&terminal));
+        assert!(app.geometry.toolbar.is_none());
+        app.scroll = 0;
+
+        app.handle_event(&Event::Resize(25, 10)).expect("resize event");
+        terminal.backend_mut().resize(25, 10);
+        terminal.resize(ratatui::layout::Rect::new(0, 0, 25, 10)).expect("resize");
+        terminal.draw(|frame| app.draw(frame)).expect("resized");
+        assert!(!has_images(&terminal), "resize clears selection and image placements");
+        assert!(app.geometry.toolbar.is_none());
+        terminal.backend_mut().resize(110, 24);
+        terminal.resize(ratatui::layout::Rect::new(0, 0, 110, 24)).expect("resize back");
+    }
+}
+
+#[test]
+fn kitty_backend_emits_cached_pixel_payload_and_owned_cleanup() {
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::layout::Rect;
+    use ratatui::{TerminalOptions, Viewport};
+
+    let mut app = image_app();
+    // Fixed viewport avoids any size or cursor-position query, including on CI.
+    let mut bytes = Vec::new();
+    let mut terminal = Terminal::with_options(
+        CrosstermBackend::new(&mut bytes),
+        TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 110, 24)) },
+    )
+    .expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("layout");
+    for _ in 0..3 {
+        app.select_quote_for_snapshot("first thing").expect("select");
+        terminal.draw(|frame| app.draw(frame)).expect("show");
+        terminal.draw(|frame| app.draw(frame)).expect("unchanged");
+        app.handle_event(&key(KeyCode::Esc, KeyModifiers::NONE)).expect("dismiss");
+        terminal.draw(|frame| app.draw(frame)).expect("hide");
+    }
+    app.toolbar_images.as_ref().expect("images").cleanup(terminal.backend_mut()).expect("cleanup");
+    drop(terminal);
+    let output = String::from_utf8(bytes.clone()).expect("ANSI UTF-8");
+    assert_eq!(
+        output.matches("a=T,U=1,f=32").count(),
+        4,
+        "one upload per cached image, never per frame or reselect"
+    );
+    assert_eq!(output.matches("t=d,s=16,v=16").count(), 4, "one-row square RGBA canvases");
+    let mut payloads = Vec::<String>::new();
+    for command in output.split("\x1b_G").skip(1) {
+        let command = command.split_once("\x1b\\").expect("terminated APC").0;
+        let (parameters, data) = command.split_once(';').expect("APC parameters");
+        if parameters.contains("a=T") {
+            payloads.push(data.to_owned());
+        } else if parameters.starts_with("q=2,m=") {
+            payloads.last_mut().expect("continuation after upload").push_str(data);
+        }
+    }
+    assert_eq!(payloads.len(), 4);
+    for (index, payload) in payloads.iter().enumerate() {
+        let generated = image::RgbaImage::from_fn(12, 12, |x, y| {
+            image::Rgba([index as u8 * 50, x as u8 * 20, y as u8 * 20, 255])
+        });
+        let resized = image::DynamicImage::ImageRgba8(generated)
+            .resize(14, 14, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+        let mut canvas = image::RgbaImage::new(16, 16);
+        image::imageops::overlay(&mut canvas, &resized, 1, 1);
+        assert_eq!(
+            *payload,
+            crate::base64::encode(canvas.as_raw()),
+            "terminal receives artwork resized to 85% of row height, centered on a transparent canvas"
+        );
+    }
+    assert!(output.contains('\u{10eeee}'), "Kitty Unicode placements in real backend output");
+    assert_eq!(output.matches("a=d,d=I,i=").count(), 4);
+    assert!(!output.contains("\x1b[6n") && !output.contains("\x1b[16t"), "no terminal queries");
+    // Optional headless evidence artifact for manual inspection. Generated gradient PNGs
+    // only; normal tests do not create a persistent capture.
+    if let Some(path) = std::env::var_os("ANNOTATE_TEST_KITTY_CAPTURE") {
+        std::fs::write(path, &bytes).expect("write requested ANSI capture");
+    }
+}
+
+#[test]
+fn done_and_get_save_acknowledgements_while_esc_just_dismisses() {
+    let mut app = app(Box::new(Discard));
+    draw(&mut app);
+    for (code, body) in [(KeyCode::Enter, "done"), (KeyCode::Char('g'), "get")] {
+        app.handle_event(&click_at(5, 3)).expect("first click");
+        app.handle_event(&click_at(5, 3)).expect("second click");
+        app.handle_event(&key(code, KeyModifiers::NONE)).expect("acknowledge");
+        assert_eq!(app.status.as_deref(), Some(format!("{body} saved").as_str()));
+        assert!(app.pending.is_none(), "the acknowledgement closes the toolbar");
+        let placed = app.open.store.placed();
+        assert_eq!(placed.last().expect("saved note").annotation.body, body);
+    }
+    app.handle_event(&click_at(5, 3)).expect("first click");
+    app.handle_event(&click_at(5, 3)).expect("second click");
+    let placed_before = app.open.store.placed().len();
+    app.handle_event(&key(KeyCode::Esc, KeyModifiers::NONE)).expect("dismiss");
+    assert!(app.pending.is_none());
+    assert_eq!(app.open.store.placed().len(), placed_before, "dismissing saves nothing");
+}
+
+#[test]
+fn copying_is_an_explicit_pending_action_that_keeps_the_selection() {
     let mut app = app(Box::new(Discard));
     draw(&mut app);
     let (col, row) = (5, 3);
     app.handle_event(&click_at(col, row)).expect("first click");
     app.handle_event(&click_at(col, row)).expect("second click");
     let rows = draw(&mut app);
-    assert!(rows.iter().any(|r| r.contains("copy (y)")), "toolbar offers copy: {rows:?}");
+    assert!(rows.iter().any(|r| r.contains("y copy")), "the help names copy: {rows:?}");
     assert_eq!(app.status, None, "selecting alone copies nothing");
     let placed_before = app.open.store.placed().len();
     app.handle_event(&key(KeyCode::Char('y'), KeyModifiers::NONE)).expect("copy");

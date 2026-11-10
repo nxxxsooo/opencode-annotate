@@ -336,43 +336,51 @@ fn interactive(path: &PathBuf) -> Result<()> {
 pub(crate) fn run_ui(build: impl FnOnce(usize) -> Result<App>) -> Result<()> {
     // Settle the palette before the screen is ours: the background-colour query talks to
     // the terminal directly, and it must not race the alternate screen or the event loop.
-    // A config that fails to parse never kept the plain TUI from starting; it still does
-    // not. `plannotator-tui config` is where the error is reported.
-    let config = Config::load().unwrap_or_default();
+    // In particular, an invalid image opt-in must not silently become Unicode artwork.
+    let config = Config::load()?;
+    let toolbar_images =
+        crate::toolbar_images::ToolbarImages::from_runtime(&config.ui)?.map(std::rc::Rc::new);
     crate::theme::install(
         crate::theme::resolve(|key| std::env::var(key).ok(), config.ui.theme, crate::theme::detect)?,
         &config.colors,
     );
     let mut terminal = ratatui::init();
-    execute!(stdout(), EnableMouseCapture)?;
-    let _ = execute!(stdout(), EnableBracketedPaste);
-    // Shift+Enter is only distinguishable from Enter where the kitty keyboard protocol
-    // holds end to end (terminal, and any multiplexer in between). Ask for it; the flag
-    // gates the compose box's hint so it never advertises a key that cannot arrive.
-    let shift_enter = ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
-    if shift_enter {
-        let _ = execute!(
-            stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
-    }
-    let width = doc_width(terminal.size().map_or(120, |s| s.width));
-    let result = build(width).and_then(|mut app| {
-        app.shift_enter = shift_enter;
-        app.keys = config.keys;
-        app.ui = config.ui;
-        app.prompts = config.prompts;
-        app.send_intent = crate::app::host::send_intent();
-        app.input_source = crate::app::input_source::InputSource::from_env();
-        event_loop(&mut terminal, app)
-    });
+    let mut shift_enter = false;
+    let result = (|| {
+        execute!(stdout(), EnableMouseCapture)?;
+        let _ = execute!(stdout(), EnableBracketedPaste);
+        // Shift+Enter is only distinguishable from Enter where the kitty keyboard protocol
+        // holds end to end (terminal, and any multiplexer in between). Ask for it; the flag
+        // gates the compose box's hint so it never advertises a key that cannot arrive.
+        shift_enter = ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+        if shift_enter {
+            let _ = execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
+        let width = doc_width(terminal.size().map_or(120, |s| s.width));
+        build(width).and_then(|mut app| {
+            app.shift_enter = shift_enter;
+            app.keys = config.keys;
+            app.ui = config.ui;
+            app.toolbar_images.clone_from(&toolbar_images);
+            app.prompts = config.prompts;
+            app.send_intent = crate::app::host::send_intent();
+            app.input_source = crate::app::input_source::InputSource::from_env();
+            event_loop(&mut terminal, app)
+        })
+    })();
+    // The normal Ratatui diff owns visible placements. Free the cached virtual images
+    // on both success and errors, through the same backend, before leaving its screen.
+    let cleanup = toolbar_images.as_ref().map_or(Ok(()), |images| images.cleanup(terminal.backend_mut()));
     if shift_enter {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
     let _ = execute!(stdout(), DisableBracketedPaste);
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
-    result
+    result.and(cleanup.context("freeing toolbar images"))
 }
 
 fn event_loop(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> Result<()> {

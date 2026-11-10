@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
 import { browserTarget } from "./targets.mjs"
 import { createReceiver } from "./bridge/receiver.mjs"
-
-const execute = promisify(execFile)
+import { openInBrowser } from "./scripts/browser-target.mjs"
 export function createWebReview(context, options = {}) {
   const receivers = new Map()
   let disposed = false
@@ -43,8 +40,7 @@ export function createWebReview(context, options = {}) {
       }
       if (target.url) {
         if (options.open) await options.open(target.url)
-        else if (process.platform === "darwin") await execute("open", ["-a", "Google Chrome", target.url])
-        else throw new Error("Browser review currently requires macOS")
+        else await openInBrowser(target.url, options)
       }
       context.ui.toast.show({ title: "Annotate web", message: `Ready for browser pairing: ${session.title || sessionID}. Open the extension and select this session.`, duration: 10000 })
       return true

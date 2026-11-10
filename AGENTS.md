@@ -5,6 +5,10 @@ review; the browser companion supplies webpage review. This repository owns both
 routing, native messaging and captured-session feedback delivery.
 
 - Runtime entry: `tui.ts`; text behavior: `review.mjs`; browser: `browser/`; bridge: `bridge/`; AGY companion: `agy/`.
+- Safari: `npm run build:safari` then `npm run install:safari`; shared sources stay
+  in `browser/`, engine differences in `browser/env.mjs`, app sources in `safari/`.
+  Safari requires an App-Sandboxed extension: its standalone panel copies local
+  rounds out instead of delivering to sessions. Chrome keeps native delivery.
 - Native reviewer: `tui/`; build with `npm run build:tui`, verify with `npm run check:tui`.
 - Session references: `server.ts` registers tools through `session-tools.mjs`;
   `reference-command.mjs` owns `/ref`; `session-reference.mjs` bounds and formats history.

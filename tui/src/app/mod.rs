@@ -55,16 +55,26 @@ enum Tool {
     What,
     /// Copy the selected source to the clipboard; the selection stays for annotating.
     Copy,
+    /// Acknowledge the selection: `done` says the requested work is done, `get` says
+    /// understood. Both save a short note so the agent receives the acknowledgement.
+    Done,
+    Get,
 }
 
-/// Toolbar items in display order: (glyph, label, key, tool).
-const TOOLBAR: [(&str, &str, Action, Tool); 5] = [
-    ("👍", "looks good", Action::LooksGood, Tool::Mark(Kind::LooksGood)),
-    ("💬", "comment", Action::Comment, Tool::Mark(Kind::Comment)),
+/// Toolbar items in display order: (glyph, label, key, tool). Only the first `BUTTONS` get a
+/// button, drawn as glyph plus key; the rest are keys named in the footer help, so the
+/// floating bar stays four small buttons.
+const TOOLBAR: [(&str, &str, Action, Tool); 7] = [
+    ("👍", "", Action::LooksGood, Tool::Mark(Kind::LooksGood)),
+    ("💬", "", Action::Comment, Tool::Mark(Kind::Comment)),
+    ("✅", "", Action::Done, Tool::Done),
+    ("👌", "", Action::Get, Tool::Get),
     ("❓", "what?", Action::What, Tool::What),
     ("✗", "delete", Action::Delete, Tool::Mark(Kind::Delete)),
     ("⧉", "copy", Action::Copy, Tool::Copy),
 ];
+/// How many leading toolbar items are buttons.
+const BUTTONS: usize = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
@@ -214,6 +224,7 @@ pub(crate) struct App {
     pub(crate) keys: Keymap,
     /// `[ui]` from the config: the centered viewport and the document width.
     pub(crate) ui: UiConfig,
+    pub(crate) toolbar_images: Option<std::rc::Rc<crate::toolbar_images::ToolbarImages>>,
     /// `[prompts]` from the config: instructions added to sent feedback.
     pub(crate) prompts: Prompts,
     /// The last primary-button press, for double-click detection.
@@ -290,6 +301,7 @@ impl App {
             shift_enter: false,
             keys: Keymap::default(),
             ui: UiConfig::default(),
+            toolbar_images: None,
             prompts: Prompts::default(),
             last_click: None,
             geometry: Geometry::default(),
@@ -484,11 +496,18 @@ impl App {
             }
             Tool::Copy => {
                 let text = self.open.doc.source.get(pending.range).unwrap_or_default();
+                let count = text.chars().count();
                 self.status = Some(if self.clipboard && Clipboard.deliver(text).is_ok() {
-                    format!("copied {} characters", text.chars().count())
+                    format!("Copied to clipboard ({count} chars)")
                 } else {
                     "clipboard unavailable".to_owned()
                 });
+            }
+            Tool::Done | Tool::Get => {
+                let body = if tool == Tool::Done { "done" } else { "get" };
+                self.annotate(pending.range, Kind::Comment, body.to_owned())?;
+                self.clear_selection();
+                self.status = Some(format!("{body} saved"));
             }
         }
         Ok(())

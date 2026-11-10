@@ -1,9 +1,12 @@
 import { PROTOCOL, markdown, validateReview } from "./protocol.mjs"
+import { panelPolling, panelWindowID } from "./env.mjs"
 
 const $ = id => document.getElementById(id)
 const make = (tag, text = "") => { const node = document.createElement(tag); node.textContent = text; return node }
 const clone = value => structuredClone(value)
 const writerID = crypto.randomUUID(), models = new Map(), busy = new Set()
+const windowID = panelWindowID()
+let deliverySupported = true
 let state, model, destination, available, targets = [], connectionError = "", connectionLoading = true
 let refreshID = 0, connectionRevision = 0, connectionBusy = false, scheduledRefresh
 let pendingAction, pendingFocus, undoRecord, selectedNoteID, noteRenderKey, connectionOptionsKey, notice, outdated = false
@@ -15,7 +18,7 @@ function icon(name) {
   svg.append(use); return svg
 }
 async function call(data) {
-  const result = await chrome.runtime.sendMessage(data)
+  const result = await chrome.runtime.sendMessage(windowID === undefined ? data : { ...data, windowID })
   if (result?.error === "Unknown annotation action") throw markOutdated()
   if (!result?.ok) throw Object.assign(new Error(result?.error || "Extension disconnected; reopen the panel"), { code: result?.code, draft: result?.draft, note: result?.note })
   return result
@@ -265,6 +268,24 @@ function deliveryMode() { return connectionLoading ? "loading" : available ? "se
 function renderDelivery() {
   const mode = deliveryMode(), retry = mode === "send" ? state?.outbox : null, pending = pendingCount()
   const count = retry?.count ?? pending, working = busy.has("send") || busy.has("copy-round")
+  if (!deliverySupported) {
+    $("empty-footnote").textContent = "Collect a few notes, then copy the round into your agent."
+    $("paired").textContent = "Copy only"
+    $("change-target").disabled = true
+    $("link-state").textContent = ""
+    $("link-state").className = "link-state"
+    $("send-label").textContent = working ? "Copying…" : count ? `Copy ${plural(count)}` : "Copy notes"
+    $("send").disabled = locked() || outdated || !state || !count || !!model?.conflict
+    $("send-arrow").toggleAttribute("hidden", true)
+    $("send-copy").toggleAttribute("hidden", !count || working)
+    $("copy-round").hidden = true
+    const currentNotice = notice && (!notice.page || notice.page === state?.page.url) ? notice : null
+    for (const tone of ["error", "warning", "success"]) $("status").classList.toggle(tone, currentNotice?.tone === tone)
+    $("status").textContent = currentNotice?.text || (connectionLoading ? "Preparing the panel…" :
+      working ? "Copying to the clipboard…" : count ? "Safari keeps notes local. Copy the round and paste it into any agent." :
+      "Safari keeps notes local. Add a note, then copy the round into your agent.")
+    return
+  }
   const wrongDestination = retry && retry.targetID !== destination?.id
   const choosing = !destination && targets.length > 0
   $("paired").textContent = destination?.title || (connectionLoading ? "Looking for your session…" : choosing ? "Choose a session" : "No session")
@@ -341,6 +362,13 @@ async function refreshConnection() {
   try {
     const result = await call({ action: "connection" })
     if (revision !== connectionRevision) return
+    deliverySupported = result.delivery !== false
+    if (!deliverySupported) {
+      targets = []; available = null; destination = null; connectionError = ""
+      $("connection-hint").textContent = "Safari keeps notes local. Copy a round and paste it into your agent."
+      showSessionOptions(false, false)
+      return
+    }
     if (available?.id !== result.target?.id || destination?.id !== result.destination?.id) notice = null
     targets = result.targets; available = result.target; destination = result.destination; connectionError = result.error || ""
     const optionsKey = JSON.stringify([targets.map(target => [target.id, target.provider, target.title, target.directory]), destination?.id, !!available])
@@ -464,6 +492,7 @@ task("restore-round", async () => {
   await refresh(); status(`Restored ${plural(result.count)} to this round`); focusWhenReady("#notes .note-target")
 })
 task("send", async () => {
+  if (!deliverySupported) return copyRound()
   // The click follows the visible label: Copy without a live session, Send with one.
   if (deliveryMode() === "copy") {
     if (state && pendingCount()) return copyRound()
@@ -513,7 +542,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 })
 chrome.tabs.onActivated.addListener(scheduleRefresh)
 chrome.tabs.onUpdated.addListener((_id, change) => { if (change.status === "complete") scheduleRefresh() })
-setInterval(() => { if (document.visibilityState === "visible") refresh() }, 1500)
-setInterval(() => { if (document.visibilityState === "visible") refreshConnection() }, 10000)
+setInterval(() => { if (panelPolling()) refresh() }, 1500)
+setInterval(() => { if (panelPolling()) refreshConnection() }, 10000)
 window.addEventListener("focus", refreshConnection)
 await Promise.all([refreshConnection(), refresh()])

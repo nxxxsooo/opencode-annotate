@@ -61,6 +61,35 @@ pub(crate) struct UiConfig {
     /// Widest the document's text gets; spare columns sit between it and the rail. Zero
     /// lets the document take every column the rail leaves.
     pub(crate) doc_width: u16,
+    /// Local-only artwork directory. Nothing is bundled with the executable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) toolbar_images: Option<PathBuf>,
+    /// Explicit assertion that the terminal supports Kitty Unicode placeholders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) toolbar_image_protocol: Option<String>,
+    /// Optional [width, height] of a terminal cell in pixels; otherwise use `window_size`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) toolbar_image_cell_size: Option<[u16; 2]>,
+}
+
+impl UiConfig {
+    pub(crate) fn validate_toolbar_images(&self) -> Result<()> {
+        match (&self.toolbar_images, self.toolbar_image_protocol.as_deref()) {
+            (None, None) if self.toolbar_image_cell_size.is_none() => return Ok(()),
+            (Some(path), Some("kitty")) if path.is_absolute() => {}
+            _ => anyhow::bail!(
+                "[ui] toolbar images require an absolute toolbar_images directory and \
+                 toolbar_image_protocol = \"kitty\"; remove all toolbar_image* keys to disable"
+            ),
+        }
+        if let Some([width, height]) = self.toolbar_image_cell_size {
+            anyhow::ensure!(
+                (1..=256).contains(&width) && (1..=256).contains(&height),
+                "[ui] toolbar_image_cell_size must be [width, height], each in 1..=256"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// How plannotator-tui opens inside Herdr.
@@ -165,7 +194,9 @@ pub(crate) fn config_path(env: impl Fn(&str) -> Option<String>, home: &Path) -> 
 
 impl Config {
     pub(crate) fn parse(text: &str) -> Result<Self> {
-        toml::from_str(text).map_err(|e| anyhow::anyhow!("{}", e.message().trim()))
+        let config: Self = toml::from_str(text).map_err(|e| anyhow::anyhow!("{}", e.message().trim()))?;
+        config.ui.validate_toolbar_images()?;
+        Ok(config)
     }
 
     /// Read the config file for this process; a missing file is the default config.

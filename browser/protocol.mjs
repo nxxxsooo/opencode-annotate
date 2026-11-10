@@ -1,7 +1,7 @@
 export const MAX_BYTES = 512 * 1024
 export const HOST = "fun.mjshao.annotate"
 // Bump when panel ↔ worker actions change. Chrome can keep an older worker running beside a newer panel.
-export const PROTOCOL = 2
+export const PROTOCOL = 5
 export function safeUrl(input) {
   const url = new URL(input)
   if (!["http:", "https:", "file:"].includes(url.protocol)) throw new Error("Unsupported page URL")

@@ -12,6 +12,7 @@ import { enqueueAnnotations, listPendingBatches, defaultInboxRoot } from "./inbo
 import { startAgyDaemon } from "./daemon.mjs"
 import { listTargets, registryRoot } from "../bridge/receiver.mjs"
 import { browserTarget } from "../targets.mjs"
+import { openInBrowser } from "../scripts/browser-target.mjs"
 import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
@@ -47,6 +48,7 @@ Commands:
 Options:
   --session <id>       Explicit AGY conversation ID (defaults to cwd-matched active session)
   --binary <path>      Override the bundled Annotate TUI executable
+  --browser <name>     Browser review: Chrome (default) or Safari (copy only)
 `)
 }
 
@@ -116,14 +118,14 @@ async function cmdWeb(targetArg, options) {
   }
 
   console.log(`✓ Session paired for browser review: "${session.title}" (${session.conversationId.slice(0, 8)})`)
-  console.log(`  Open Chrome extension "Annotate" and choose this session.`)
+  console.log(`  Open the "Annotate" extension and choose this session (Safari copies notes locally).`)
 
   if (targetArg && targetArg.trim()) {
     const target = await browserTarget(targetArg, session.directory)
     if (target?.url) {
-      console.log(`  Opening Chrome target: ${target.url}`)
+      console.log(`  Opening target: ${target.url}`)
       if (process.platform === "darwin") {
-        await execute("open", ["-a", "Google Chrome", target.url])
+        await openInBrowser(target.url, options)
       }
     }
   }
@@ -323,6 +325,8 @@ async function main() {
       options.binary = args[++i]
     } else if (args[i] === "--interactive-tty") {
       options.interactiveTty = true
+    } else if (args[i] === "--browser") {
+      options.browser = args[++i]
     } else if (!args[i].startsWith("-") && !posArg) {
       posArg = args[i]
     }

@@ -21,7 +21,7 @@ export default Plugin.define({
     })
     await configuration.ready
     const inputSource = createInputSource(context.options.inputSource)
-    const review = createReviewCommand(context, { inputSource })
+    const review = createReviewCommand(context, { inputSource, web: { browser: options.browser } })
     restartAutoReview = () => {
       stopAutoReview()
       stopAutoReview = createAutoReview(context, review)

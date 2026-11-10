@@ -16,6 +16,7 @@ mod layout;
 mod srcmap;
 mod store;
 mod theme;
+mod toolbar_images;
 mod tree;
 mod workspace_paths;
 mod wrap;

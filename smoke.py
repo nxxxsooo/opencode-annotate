@@ -9,6 +9,7 @@ import struct
 import subprocess
 import tempfile
 import time
+import uuid
 
 
 PLUGIN = Path(__file__).resolve().parent
@@ -29,13 +30,21 @@ root = Path(tempfile.mkdtemp(prefix="annotate-last-smoke-", dir=TMP)).resolve()
 socket = f"annotate-last-smoke-{os.getpid()}"
 session = None
 event_number = 0
+MESSAGE_SUFFIX = uuid.uuid4().hex
+
+
+def message_id(name):
+    return f"msg_smoke_{name}_{MESSAGE_SUFFIX}"
 
 
 def api(method, route, data=None):
     args = ["opencode", "api", method, route]
     if data is not None:
         args += ["--data", json.dumps(data)]
-    result = subprocess.run(args, capture_output=True, text=True, check=True, timeout=30)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise RuntimeError(f"API {method} {route} failed ({result.returncode}); "
+                           f"stderr: {result.stderr[:2000]}; stdout: {result.stdout[:2000]}")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -159,6 +168,31 @@ def annotate(note, label):
 
 
 try:
+    # The runtime intentionally strips PLANNOTATOR_TUI_* variables. Set the isolated
+    # Unicode-only configuration at the executable boundary, never in user config.
+    binary = subprocess.run([
+        "node", "--input-type=module", "-e",
+        f'import {{ resolveTuiBinary }} from {json.dumps((PLUGIN / "tui/binary.mjs").as_uri())}; '
+        f'console.log(resolveTuiBinary({json.dumps(BINARY_OPTIONS.get("binary"))} ?? undefined))',
+    ], capture_output=True, text=True, check=True, timeout=15).stdout.strip()
+    (root / "tui.toml").write_text("")
+    launcher = root / "annotate-tui"
+    # Honor a fresh host-theme config supplied by prepareTheme after env filtering.
+    launcher.write_text("#!/bin/sh\n" +
+                        f'export PLANNOTATOR_TUI_CONFIG="${{PLANNOTATOR_TUI_CONFIG:-{root / "tui.toml"}}}"\n' +
+                        "exec " + shlex.quote(binary) + ' "$@"\n')
+    launcher.chmod(0o700)
+    config_env = {key: value for key, value in os.environ.items() if key != "PLANNOTATOR_TUI_CONFIG"}
+    effective = subprocess.run([str(launcher), "config"], env=config_env,
+                               capture_output=True, text=True, check=True, timeout=15).stdout
+    assert effective.startswith(f"# {root / 'tui.toml'}\n") and "toolbar_images" not in effective
+    explicit_config = root / "explicit-tui.toml"
+    explicit_config.write_text("[ui]\ndoc_width = 91\n")
+    effective = subprocess.run([str(launcher), "config"],
+                               env={**config_env, "PLANNOTATOR_TUI_CONFIG": str(explicit_config)},
+                               capture_output=True, text=True, check=True, timeout=15).stdout
+    assert effective.startswith(f"# {explicit_config}\n") and "doc_width = 91" in effective
+    BINARY_OPTIONS["binary"] = str(launcher)
     # Keep selection deterministic; exercise the real plugin, renderer, binary, confirmation,
     # client SDK and API. resume:false is the only submission change, to avoid an LLM run.
     fixture = root / "fixture"
@@ -252,17 +286,17 @@ export default {{
           }} }}
         }},
         message: {{ ...ctx.client.message, async list() {{ return {{ data: [{{
-          id: "msg_smoke_fixture", type: "assistant", agent: "build",
+          id: {json.dumps(message_id("fixture"))}, type: "assistant", agent: "build",
           model: {{ providerID: "fixture", id: "fixture" }},
           time: {{ created: 2, completed: 3 }}, finish: "stop",
           content: [{{ type: "text", text: "# Terminal review fixture\\n\\nAlpha paragraph with **bold label**.\\n\\n- bullet item\\n\\n1. numbered [item](https://example.com)\\n" }}],
         }}, {{
-          id: "msg_smoke_progress", type: "assistant", agent: "build",
+          id: {json.dumps(message_id("progress"))}, type: "assistant", agent: "build",
           model: {{ providerID: "fixture", id: "fixture" }},
           time: {{ created: 1, completed: 2 }}, finish: "tool-calls",
           content: [{{ type: "text", text: "# Progress update fixture\\n\\nAlpha paragraph.\\n" }}],
         }}, {{
-          id: "msg_smoke_older", type: "assistant", agent: "build",
+          id: {json.dumps(message_id("older"))}, type: "assistant", agent: "build",
           model: {{ providerID: "fixture", id: "fixture" }},
           time: {{ created: 0, completed: 1 }}, finish: "stop",
           content: [{{ type: "text", text: "# Previous reply fixture\\n\\nAlpha paragraph.\\n" }}],
@@ -294,11 +328,11 @@ export default {{
          "model": {"providerID": "fixture", "id": "fixture"}, "finish": finish,
          "time": {"created": index, "completed": index + 1}, "content": [{"type": "text", "text": text}]}
         for index, (message_id, text, finish) in enumerate([
-            ("msg_smoke_auto", auto_text, "stop"),
-            ("msg_smoke_short", "Short reply.", "stop"),
-            ("msg_smoke_auto_progress", "Long progress update that must never open the automatic reviewer.", "tool-calls"),
-            ("msg_smoke_auto_disabled", auto_text, "stop"),
-            ("msg_smoke_auto_empty", auto_text, "stop"),
+            (message_id("auto"), auto_text, "stop"),
+            (message_id("short"), "Short reply.", "stop"),
+            (message_id("auto_progress"), "Long progress update that must never open the automatic reviewer.", "tool-calls"),
+            (message_id("auto_disabled"), auto_text, "stop"),
+            (message_id("auto_empty"), auto_text, "stop"),
         ])
     ]
     api("post", "/api/experimental/session/import", {
@@ -324,11 +358,11 @@ export default {{
     # Imported history alone must not open a review. Short replies and progress updates
     # stay closed; a successful new completion opens the exact reply via the real API.
     assert launches() == 0
-    for message_id, finish in [("msg_smoke_short", "stop"), ("msg_smoke_auto_progress", "tool-calls")]:
-        event("session.step.ended", {"assistantMessageID": message_id, "finish": finish})
+    for reply_id, finish in [(message_id("short"), "stop"), (message_id("auto_progress"), "tool-calls")]:
+        event("session.step.ended", {"assistantMessageID": reply_id, "finish": finish})
         event("session.execution.succeeded", {})
         assert launches() == 0
-    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto", "finish": "stop"})
+    event("session.step.ended", {"assistantMessageID": message_id("auto"), "finish": "stop"})
     assert launches() == 0, "A completed text block is not yet a completed turn"
     completion = event("session.execution.succeeded", {}, wait_done=False)
     wait("last-reply.md · 0 annotations", "auto-open")
@@ -338,22 +372,22 @@ export default {{
     wait("Sent 1 annotation", "auto-sent")
     wait_event(completion)
     automatic_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
-    assert "SMOKE automatic feedback" in automatic_inbox and "msg_smoke_auto" in automatic_inbox
-    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto", "finish": "stop"})
+    assert "SMOKE automatic feedback" in automatic_inbox and message_id("auto") in automatic_inbox
+    event("session.step.ended", {"assistantMessageID": message_id("auto"), "finish": "stop"})
     event("session.execution.succeeded", {})
     assert launches() == 1, "A completed reply must open only once"
     assert len(api("get", f"/api/session/{session}/message")["data"]) == len(messages), "No model turn should run"
 
     configure_auto(False)
-    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto_disabled", "finish": "stop"})
+    event("session.step.ended", {"assistantMessageID": message_id("auto_disabled"), "finish": "stop"})
     event("session.execution.succeeded", {})
     assert launches() == 1, "Saving autoAnnotate:false must disable automatic reviews"
     configure_auto(True)
-    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto", "finish": "stop"})
+    event("session.step.ended", {"assistantMessageID": message_id("auto"), "finish": "stop"})
     event("session.execution.succeeded", {})
     assert launches() == 1, "Config reload must preserve deduplication"
     before_empty = api("get", f"/api/session/{session}/inbox")
-    event("session.step.ended", {"assistantMessageID": "msg_smoke_auto_empty", "finish": "stop"})
+    event("session.step.ended", {"assistantMessageID": message_id("auto_empty"), "finish": "stop"})
     completion = event("session.execution.succeeded", {}, wait_done=False)
     wait("last-reply.md · 0 annotations", "auto-reenabled")
     keys("q")
@@ -377,7 +411,7 @@ export default {{
     (root / "inbox.json").write_text(json.dumps(inbox, ensure_ascii=False, indent=2))
     encoded = json.dumps(inbox, ensure_ascii=False)
     assert "SMOKE exact-session feedback" in encoded, encoded
-    assert "msg_smoke_fixture" in encoded, encoded
+    assert message_id("fixture") in encoded, encoded
 
     if SEND_KEY:
         # Ctrl+S mid-comment saves it and sends without OpenCode's confirmation.
@@ -450,7 +484,7 @@ export default {{
     wait("Sent 1 annotation", "pick-sent")
     pick_inbox = api("get", f"/api/session/{session}/inbox")
     encoded = json.dumps(pick_inbox)
-    assert "msg_smoke_progress" in encoded and "SMOKE progress feedback" in encoded, encoded
+    assert message_id("progress") in encoded and "SMOKE progress feedback" in encoded, encoded
 
     # Browser review opens a local receiver without a model call or visible browser.
     submit("/annotate-web", "web")

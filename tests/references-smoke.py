@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 
 
 PLUGIN = Path(os.environ.get("ANNOTATE_PACKAGE_ROOT", Path(__file__).resolve().parent.parent)).resolve()
@@ -16,13 +17,21 @@ root = Path(tempfile.mkdtemp(prefix="annotate-ref-smoke-", dir=TMP)).resolve()
 socket = f"annotate-ref-smoke-{os.getpid()}"
 sessions = []
 passed = False
+MESSAGE_SUFFIX = uuid.uuid4().hex
+
+
+def message_id(name):
+    return f"msg_refsmoke{name}_{MESSAGE_SUFFIX}"
 
 
 def api(method, route, data=None):
     args = ["opencode", "api", method, route, "--header", "Accept-Encoding:identity"]
     if data is not None:
         args += ["--data", json.dumps(data)]
-    result = subprocess.run(args, capture_output=True, text=True, check=True, timeout=60)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        raise RuntimeError(f"API {method} {route} failed ({result.returncode}); "
+                           f"stderr: {result.stderr[:2000]}; stdout: {result.stdout[:2000]}")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -57,13 +66,13 @@ try:
     api("post", "/api/experimental/session/import", {
         "info": source, "location": {"directory": str(root)},
         "messages": [
-            {"id": "msg_refsmokeuser", "type": "user", "time": {"created": 1}, "text": "SMOKE pre-compaction decision\n" + "a" * 180000},
-            {"id": "msg_refsmokelarge", "type": "user", "time": {"created": 1.5}, "text": "SMOKE large response\n" + "b" * 180000},
-            {"id": "msg_refsmokecheckpoint", "type": "compaction", "time": {"created": 2},
+            {"id": message_id("user"), "type": "user", "time": {"created": 1}, "text": "SMOKE pre-compaction decision\n" + "a" * 180000},
+            {"id": message_id("large"), "type": "user", "time": {"created": 1.5}, "text": "SMOKE large response\n" + "b" * 180000},
+            {"id": message_id("checkpoint"), "type": "compaction", "time": {"created": 2},
              "status": "completed", "reason": "manual", "summary": "SMOKE summary"},
-            *[{"id": f"msg_refsmokefiller{n:03d}", "type": "user", "time": {"created": n + 3},
+            *[{"id": message_id(f"filler{n:03d}"), "type": "user", "time": {"created": n + 3},
                "text": f"SMOKE following exchange {n}"} for n in range(55)],
-            {"id": "msg_refsmokeanswer", "type": "assistant", "time": {"created": 60, "completed": 61},
+            {"id": message_id("answer"), "type": "assistant", "time": {"created": 60, "completed": 61},
              "agent": "build", "model": {"providerID": "fixture", "id": "fixture"}, "finish": "stop",
              "content": [{"type": "text", "text": "SMOKE agreed implementation"},
                          {"type": "reasoning", "text": "SMOKE private reasoning"}]},
@@ -87,12 +96,12 @@ export default {{ ...plugin, id: "test.annotate-ref", async setup(ctx) {{
     const search = tools.find(t => t.id === "annotate_session_search")
     const read = tools.find(t => t.id === "annotate_session_read")
     if (!search || !read) throw new Error("Reference tools were not registered")
-    const tool = {{ sessionID: {json.dumps(target["id"])}, messageID: "msg_refsmokecall", id: "ref-smoke",
+    const tool = {{ sessionID: {json.dumps(target["id"])}, messageID: {json.dumps(message_id("call"))}, id: "ref-smoke",
       agent: "build", signal: new AbortController().signal, progress: async () => {{}} }}
     const found = await search.execute({{ query: {json.dumps(root.name)} }}, tool)
     const reference = await read.execute({{ sessionID: {json.dumps(source["id"])} }}, tool)
     const older = await read.execute({{ sessionID: {json.dumps(source["id"])}, cursor: JSON.parse(reference.content).nextCursor }}, tool)
-    const message = await read.execute({{ sessionID: {json.dumps(source["id"])}, messageID: "msg_refsmokeanswer", offset: 6 }}, tool)
+    const message = await read.execute({{ sessionID: {json.dumps(source["id"])}, messageID: {json.dumps(message_id("answer"))}, offset: 6 }}, tool)
     writeFileSync({json.dumps(str(result_path))}, JSON.stringify({{ found, reference, older, message }}))
   }} catch (error) {{
     writeFileSync({json.dumps(str(result_path))}, JSON.stringify({{ error: String(error), stack: error.stack,
@@ -114,7 +123,8 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
 }} }}
 ''')
     # Loading this test location activates its server + TUI package together.
-    inline = json.dumps({"animations": False, "tabs": {"mode": "off"}, "debug": {"devtools": False}})
+    inline = json.dumps({"plugins": ["-opencode-annotate"], "animations": False,
+                         "tabs": {"mode": "off"}, "debug": {"devtools": False}})
     command = shlex.join(["env", f"OPENCODE_CLI_CONFIG_CONTENT={inline}", "opencode", "--session", target["id"], str(root)])
     tmux("new-session", "-d", "-s", "check", "-x", "160", "-y", "42", "-c", str(root), command)
     wait("Reference isolated destination", "host-ready")
@@ -161,7 +171,7 @@ finally:
     for session_id in reversed(sessions):
         try:
             api("delete", f"/api/session/{session_id}")
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             pass
     if passed:
         shutil.rmtree(root)

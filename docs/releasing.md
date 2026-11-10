@@ -19,7 +19,13 @@ connection/session-picker redesign and command consolidation. Existing commands,
 
 Release-request evidence: `combined-safari-toolbar-release-20261110` in
 [`sources.json`](../sources.json). Safari's prior user acceptance is recorded there;
-the extracted candidate still requires its own regression and build checks.
+the extracted candidate passed 403 Rust tests, 97 Node tests, all 33 unchanged Chrome
+scenarios, and the isolated OpenCode smoke/reference suites on OpenCode 2.2.7. The 21-scenario
+smoke suite also passed with inherited dark and light colors. Fixtures use unique message
+IDs and disable the maintainer's unrelated TUI plugin; no model turn is started.
+Both ad-hoc and locally signed Safari builds passed, with app/extension metadata at 0.12.0
+and App Sandbox enabled. The extracted Safari popup-failure path is regression-tested;
+a full repeat of the user's real Safari interaction was not performed for this candidate.
 
 ## 0.11.1 release baseline — 2026-11-08
 

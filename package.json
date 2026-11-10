@@ -1,6 +1,6 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, and reference previous conversations.",
   "license": "MIT",
   "type": "module",
@@ -13,9 +13,11 @@
     "agy-annotate": "./agy/cli.mjs"
   },
   "scripts": {
+    "build:safari": "node scripts/build-safari.mjs",
+    "install:safari": "node scripts/install-safari.mjs",
     "build:tui": "node scripts/build-tui.mjs",
     "check:tui": "cargo fmt --manifest-path tui/Cargo.toml --all --check && cargo clippy --manifest-path tui/Cargo.toml --workspace --all-targets --locked -- -D warnings && cargo test --manifest-path tui/Cargo.toml --workspace --locked",
-    "test": "node --test *.test.mjs bridge/*.test.mjs agy/*.test.mjs",
+    "test": "node --test *.test.mjs bridge/*.test.mjs agy/*.test.mjs scripts/*.test.mjs",
     "test:browser": "node tests/browser.mjs",
     "install:bridge": "node scripts/install-bridge.mjs",
     "install:plugin": "node scripts/install-plugin.mjs",
@@ -50,6 +52,11 @@
     "bridge/wire.mjs",
     "agy",
     "scripts/install-bridge.mjs",
+    "safari/background.html",
+    "safari/SafariWebExtensionHandler.swift",
+    "scripts/build-safari.mjs",
+    "scripts/install-safari.mjs",
+    "scripts/browser-target.mjs",
     "scripts/install-plugin.mjs",
     "scripts/verify-tui.mjs",
     "scripts/migrate-page-context.mjs",

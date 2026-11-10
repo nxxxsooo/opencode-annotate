@@ -52,6 +52,7 @@
   }, { capture: true })
   on(document, "keydown", event => { if (picking && event.key === "Escape") setPicking(false) })
   const onMessage = (message, _sender, respond) => {
+    if (message.action === "annotate-ping") { respond({ ok: true }); return }
     if (message.action === "pick") { setPicking(!picking); respond({ ok: true, picking }) }
     if (message.action === "markers") { markers = message.notes || []; draw(); respond({ ok: true }) }
     if (message.action === "locate") respond({ states: message.anchors.map(locate) })

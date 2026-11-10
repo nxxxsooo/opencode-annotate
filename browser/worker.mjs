@@ -1,9 +1,15 @@
 import { HOST, PROTOCOL, pageTitle, safeUrl, validateReview } from "./protocol.mjs"
+import { openPanel, reconnectHint, resolveTargetTab, sameExtensionURL, sessionDelivery } from "./env.mjs"
 
+const DELIVERY = sessionDelivery()
 const pageKey = async url => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url)))].map(v => v.toString(16).padStart(2, "0")).join("")
 let writes = Promise.resolve()
 const serial = fn => { const next = writes.then(fn); writes = next.catch(() => {}); return next }
-const RECONNECT = "This page reloaded. Click the Annotate icon (Alt+Shift+A) once to reconnect it; your notes are kept."
+const RECONNECT = reconnectHint()
+const native = message => {
+  if (!DELIVERY) throw new Error("Session delivery is off in Safari. Copy the round instead.")
+  return chrome.runtime.sendNativeMessage(HOST, message)
+}
 const KEPT_ROUNDS = 10
 const inject = tabId => chrome.scripting.executeScript({ target: { tabId }, files: ["inspector.js", "capture.js"] })
 async function activate(tab) {
@@ -15,12 +21,16 @@ async function activate(tab) {
 async function tabMessage(tabId, message) {
   try { return await chrome.tabs.sendMessage(tabId, message) }
   catch (error) {
-    if (!String(error.message).includes("Receiving end does not exist")) throw error
+    if (!await receiverMissing(tabId)) throw error
     try { await inject(tabId) } catch (injectError) {
       throw new Error(String(injectError.message).includes("HTML") ? injectError.message : RECONNECT)
     }
     return chrome.tabs.sendMessage(tabId, message)
   }
+}
+async function receiverMissing(tabId) {
+  try { await chrome.tabs.sendMessage(tabId, { action: "annotate-ping" }); return false }
+  catch { return true }
 }
 const delivered = note => !note.deleted && note.sentRevision === note.revision
 async function closeRound(hash, annotations, details) {
@@ -52,12 +62,11 @@ function lastRound(entries) {
 }
 chrome.action.onClicked.addListener(tab => {
   // open() must retain the browser's action user gesture, before asynchronous injection.
-  chrome.sidePanel.open({ tabId: tab.id }).catch(console.error)
+  openPanel(tab).catch(console.error)
   activate(tab).catch(async error => { await chrome.storage.session.set({ [`tab:${tab.id}`]: { error: error.message } }) })
 })
-async function current() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-  if (!tab) throw new Error("No active page")
+async function current(message) {
+  const tab = await resolveTargetTab(message)
   const state = (await chrome.storage.session.get(`tab:${tab.id}`))[`tab:${tab.id}`]
   if (!state?.page) throw new Error(state?.error || "Click the extension icon on this page to grant access")
   const hash = await pageKey(state.page.url)
@@ -107,8 +116,8 @@ async function handle(message, sender) {
       ...(!message.modeOnly ? { anchor: message.anchor, error: message.error, captureID: crypto.randomUUID() } : {}) } })
     return {}
   }
-  if (sender.url && !sender.url.startsWith(chrome.runtime.getURL(""))) throw new Error("Only the extension panel can manage feedback")
-  if (message.action === "current") return current()
+  if (sender.url && !sameExtensionURL(sender.url)) throw new Error("Only the extension panel can manage feedback")
+  if (message.action === "current") return current(message)
   if (message.action === "draft") return serial(async () => {
     // A route change must still be able to persist the previous page's draft.
     if (!message.page || safeUrl(message.page.url) !== message.page.url || typeof message.page.title !== "string" ||
@@ -125,12 +134,13 @@ async function handle(message, sender) {
     await chrome.storage.local.set({ [key]: draft })
     return { draft }
   })
-  if (message.action === "targets") return chrome.runtime.sendNativeMessage(HOST, { action: "targets" })
+  if (message.action === "targets") return native({ action: "targets" })
   if (message.action === "connection") {
+    if (!DELIVERY) return { delivery: false, targets: [], target: null, destination: null, stale: false }
     const { paired } = await chrome.storage.local.get("paired")
     let result
     try {
-      result = await chrome.runtime.sendNativeMessage(HOST, { action: "targets" })
+      result = await native({ action: "targets" })
       if (!result.ok) throw new Error(result.error)
     } catch (error) {
       return { targets: [], target: null, destination: paired || null, stale: !!paired, error: error.message }
@@ -139,13 +149,13 @@ async function handle(message, sender) {
     return { targets: result.targets, target: target || null, destination: target || paired || null, stale: !!paired && !target }
   }
   if (message.action === "pair") {
-    const result = await chrome.runtime.sendNativeMessage(HOST, { action: "info", targetID: message.target.id })
+    const result = await native({ action: "info", targetID: message.target.id })
     if (!result.ok) throw new Error(result.error)
     await chrome.storage.local.set({ paired: result.target }); return { target: result.target }
   }
   if (message.action === "pairing") return { target: (await chrome.storage.local.get("paired")).paired || null }
   if (message.action === "unpair") { await chrome.storage.local.remove("paired"); return {} }
-  const state = await current()
+  const state = await current(message)
   if (message.url && message.url !== state.page.url) throw new Error("The active page changed; retry on the original page")
   if (message.action === "pick") return tabMessage(state.tabID, { action: "pick" })
   if (message.action === "reveal") {
@@ -200,14 +210,14 @@ async function handle(message, sender) {
     return { count: Object.keys(updates).length }
   })
   if (message.action === "send") return serial(async () => {
-    const latest = await current()
+    const latest = await current(message)
     if (latest.page.url !== state.page.url) throw new Error("The active page changed; return to the original page to send")
     if (typeof message.targetID !== "string" || !message.targetID) throw new Error("Choose a destination session before sending")
     let { paired } = await chrome.storage.local.get("paired")
     if (paired && paired.id !== message.targetID) throw new Error("The destination changed in another panel; choose it again")
     if (!paired) {
       // A sole target is only preselected. The user's Send click authorizes this binding.
-      const result = await chrome.runtime.sendNativeMessage(HOST, { action: "info", targetID: message.targetID })
+      const result = await native({ action: "info", targetID: message.targetID })
       if (!result.ok) throw new Error(result.error)
       paired = result.target
       await chrome.storage.local.set({ paired })
@@ -222,7 +232,7 @@ async function handle(message, sender) {
       batch = { action: "send", batchID: crypto.randomUUID(), targetID: paired.id, review }
       await chrome.storage.local.set({ [outboxKey]: batch })
     }
-    const response = await chrome.runtime.sendNativeMessage(HOST, batch)
+    const response = await native(batch)
     if (!response.ok) throw new Error(response.error)
     const count = await closeRound(state.hash, batch.review.annotations, { sentRound: batch.batchID, sentVia: "session", sentTo: paired.title })
     await chrome.storage.local.remove(outboxKey)

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.0 — Safari companion and compact review toolbar
+
+- Add a Safari Web Extension companion built from the shared browser sources, with a
+  separate panel window, local notes, restorable rounds and **Copy notes**. Safari has no
+  direct OpenCode session delivery; Chrome keeps its existing delivery behavior.
+- Add reproducible Safari build/install scripts and explicit browser selection. Safari
+  distribution is source/build support, not a prebuilt signed or notarized application.
+- Keep the selection toolbar compact with four actions: approve, comment, **Done**
+  (Enter: the requested work is finished) and **Get** (`g`: understood). Done/Get save
+  anchored feedback; Esc only dismisses. `w`, `d` and `y` remain available by keyboard.
+- Add opt-in, locally supplied PNG toolbar artwork using Kitty graphics. Images fit one
+  text row, keep action-colored bold shortcuts, and clear with the toolbar. No artwork is
+  included; unconfigured terminals keep Unicode icons.
+- Make successful explicit copying clearer: **Copied to clipboard (N chars)**.
+
 ## 0.11.1 — comment cursor movement
 
 - Up/Down move the comment and edit cursor across wrapped rows, so long single-paragraph

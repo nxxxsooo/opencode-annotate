@@ -162,7 +162,45 @@ Launchers must honor an existing `PLANNOTATOR_TUI_CONFIG`.
 
 ## Browser review (optional)
 
-Requirements: macOS and Chrome 116+, plus Node 22+ for the native host.
+Requirements: macOS and Chrome 116+ or Safari 18+, plus Node 22+ for the Chrome native host.
+
+### Safari (copy-only)
+
+Build the shared browser sources into a Safari Web Extension app with Xcode installed:
+
+```sh
+ANNOTATE_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" \
+ANNOTATE_DEVELOPMENT_TEAM="TEAMID" npm run build:safari
+npm run install:safari
+```
+
+The installer replaces `/Applications/annotate.app` and refreshes its registration.
+Open that app once, then enable Annotate in Safari > Settings > Extensions. Without
+signing environment variables the build uses an ad-hoc signature, which Safari may
+refuse to register. Allow access to the pages you want to review.
+
+Click the Annotate toolbar button, or use Option+Shift+A where Safari supports the
+extension command, to open its standalone panel. Select text or pick an element,
+write notes, then **Copy notes** to paste the round into any agent. Notes and drafts
+stay local; copying closes the round and **Restore last round** recovers it.
+
+Safari requires an App-Sandboxed app extension, so it cannot start the Node bridge or
+read the session registry. It has no direct session delivery or session chooser;
+Chrome retains both. Safari also has no docked side panel: its separate window stays
+bound to the reviewed browser window and keeps polling while you work on the page.
+
+Set the plugin option `"browser": "Safari"` so `/annotate-web <url-or-html-file>` opens
+the page in Safari. The only public values are `"Chrome"` (default) and `"Safari"`;
+Chrome maps to the macOS app Google Chrome. AGY supports the same choice with
+`agy-annotate web <url> --browser Safari`. Restart the client after changing the option.
+`/annotate-web` keeps its existing pairing lifecycle; Safari ignores that pairing
+and copies notes instead. `/annotate` remains the text/TUI command.
+
+After updates, run `npm run build:safari` with the signing variables again, then
+`npm run install:safari`. Reopen the app and re-enable the extension if needed. An
+unpacked Chrome reload does not update the installed Safari app.
+
+### Chrome (direct delivery)
 
 1. Clone this repository and load its `browser/` directory as an unpacked extension in
    `chrome://extensions`. Allow file URL access if reviewing local HTML.

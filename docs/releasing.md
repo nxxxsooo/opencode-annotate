@@ -1,5 +1,32 @@
 # Releasing
 
+## 0.12.0 release candidate — 2026-11-10
+
+The user authorized one release for the accepted compact TUI toolbar and Safari companion.
+The candidate is isolated from the mixed development tree at the 0.11.1 release baseline.
+It excludes unpublished reference comments, automatic feedback continuation, the Chrome
+connection/session-picker redesign and command consolidation. Existing commands, including
+`/annotate-web`, remain supported.
+
+| Surface | Release contract |
+|---|---|
+| TUI | Four visible actions, Done/Get feedback, explicit-copy confirmation and optional external PNGs. Artwork is one row tall with original action-colored bold shortcuts. No third-party artwork, local settings or machine-specific paths are bundled. |
+| Safari | Shared-source, App-Sandboxed copy-only companion; separate panel window and no native messaging/session delivery. Build locally with Xcode and an appropriate signing identity, then install. No signed/notarized Safari app is distributed. |
+| Chrome | Published pairing, delivery and commands stay unchanged; only cross-browser capability/targeting adapters are added. |
+| Distribution | Source/tag and GitHub Release `v0.12.0`; npm `@nxxxsooo/opencode-annotate@0.12.0` with all five native TUI executables, Safari sources and local build/install scripts. |
+| Automation | CI and tag publication both require all five native TUI builds plus an ad-hoc Safari build through Apple's converter and Xcode. No signing identity or notarization credentials enter CI. |
+| Local install | Preserve existing OpenCode plugin options and local artwork configuration. Verify published-package installation separately from publication; rebuild/install the Safari companion from the isolated release candidate. |
+
+Release-request evidence: `combined-safari-toolbar-release-20261110` in
+[`sources.json`](../sources.json). Safari's prior user acceptance is recorded there;
+the extracted candidate passed 403 Rust tests, 97 Node tests, all 33 unchanged Chrome
+scenarios, and the isolated OpenCode smoke/reference suites on OpenCode 2.2.7. The 21-scenario
+smoke suite also passed with inherited dark and light colors. Fixtures use unique message
+IDs and disable the maintainer's unrelated TUI plugin; no model turn is started.
+Both ad-hoc and locally signed Safari builds passed, with app/extension metadata at 0.12.0
+and App Sandbox enabled. The extracted Safari popup-failure path is regression-tested;
+a full repeat of the user's real Safari interaction was not performed for this candidate.
+
 ## 0.11.1 release baseline — 2026-11-08
 
 This patch fixes cursor movement in the TUI comment/edit box. Up/Down move by wrapped row

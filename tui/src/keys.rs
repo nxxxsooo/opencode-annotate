@@ -54,15 +54,17 @@ pub(crate) enum Action {
     LooksGood,
     Delete,
     Copy,
+    Done,
+    Get,
     Yes,
     No,
 }
 
 use Action::{
-    Archive, Back, Bottom, ClearBlock, Comment, Confirm, CycleFocus, Delete, Down, Edit, FinishReview,
-    Interrupt, Left, LineEnd, LineStart, LooksGood, MoveCursor, No, PageDown, PageUp, PickMessage, QuickOpen,
-    Quit, Reload, Remove, ResendAll, ReviewMenu, Right, Send, SendAndClose, ToggleHidden, ToggleTree, Top,
-    UndoFinish, Up, Visual, WordBack, WordForward, Yes,
+    Archive, Back, Bottom, ClearBlock, Comment, Confirm, CycleFocus, Delete, Done, Down, Edit, FinishReview,
+    Get, Interrupt, Left, LineEnd, LineStart, LooksGood, MoveCursor, No, PageDown, PageUp, PickMessage,
+    QuickOpen, Quit, Reload, Remove, ResendAll, ReviewMenu, Right, Send, SendAndClose, ToggleHidden,
+    ToggleTree, Top, UndoFinish, Up, Visual, WordBack, WordForward, Yes,
 };
 
 /// Browsing, before the focused pane gets the key.
@@ -93,7 +95,7 @@ pub(crate) const MOTION: &[Action] = &[Left, Right, Down, Up, WordForward, WordB
 /// While a keyboard selection grows; any other key is a motion.
 pub(crate) const VISUAL: &[Action] = &[Back, Confirm, Visual];
 /// While a finished selection waits for its kind.
-pub(crate) const TOOLBAR: &[Action] = &[LooksGood, Comment, Action::What, Delete, Action::Copy];
+pub(crate) const TOOLBAR: &[Action] = &[LooksGood, Comment, Action::What, Delete, Action::Copy, Done, Get];
 pub(crate) const CONFIRM_QUIT: &[Action] = &[Yes, Confirm, No, Back];
 pub(crate) const MENU: &[Action] =
     &[Down, Up, Confirm, Back, ReviewMenu, Interrupt, ResendAll, FinishReview, UndoFinish, Archive];
@@ -253,6 +255,8 @@ const DEFAULTS: &[(Action, &[Key])] = &[
     (LooksGood, &[ch('a')]),
     (Delete, &[ch('d')]),
     (Action::Copy, &[ch('y')]),
+    (Done, &[named(KeyCode::Enter)]),
+    (Get, &[ch('g')]),
     (Yes, &[ch('y'), ch('Y')]),
     (No, &[ch('n'), ch('N')]),
 ];
@@ -402,6 +406,8 @@ impl Action {
             Self::LooksGood => "looks-good",
             Self::Delete => "delete",
             Self::Copy => "copy",
+            Self::Done => "done",
+            Self::Get => "get",
             Self::Yes => "yes",
             Self::No => "no",
         }

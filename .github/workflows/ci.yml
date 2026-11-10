@@ -8,8 +8,10 @@ permissions:
 jobs:
   native:
     uses: ./.github/workflows/native.yml
+  safari:
+    uses: ./.github/workflows/safari.yml
   check:
-    needs: native
+    needs: [native, safari]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6

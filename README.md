@@ -82,7 +82,10 @@ commands, but cannot register the agent tools.
 
 ## Reference another conversation
 
-Run `/ref` or `/ref <title words>`, select the source, then choose **Attach reference**.
+Run `/ref` or `/ref <title words>`, select the source, add an optional comment, then choose
+**Attach reference**. The comment field grows as you type or paste, wraps long lines, and
+scrolls at a screen-aware height limit. **Shift+Enter** adds a line, **Enter** continues to
+confirmation, and **Esc** cancels without attaching anything.
 The confirmation names both conversations and shows whether the text is an excerpt.
 The source is attached to the session where you invoked `/ref`, even if you switch tabs.
 It is queued as historical context with `resume: false`: an idle assistant stays idle
@@ -507,7 +510,7 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate-pick`：从最近的回复和运行中的进度说明里选一条批注。
 - `/annotate-selection`：先在会话里拖选文字，再批注包含这段文字的消息。
 - `/annotate-last`：固定批注最新一条完整回复，忽略附带参数。
-- `/ref`：选择并引用同项目的历史会话；`/ref --all 关键词` 跨项目搜索；`/ref ses_…` 直接指定。确认后附加上下文，不启动空闲助手。
+- `/ref`：选择并引用同项目的历史会话，可附留言；留言框随内容自动增高、换行，超长时滚动。Shift+Enter 换行，Enter 进入确认，Esc 取消。`/ref --all 关键词` 跨项目搜索；`/ref ses_…` 直接指定。确认后附加上下文，不启动空闲助手。
 - `/annotate-web`：配对 Chrome；空白首页会先创建空会话，无需先发提示词。`/annotate-web 页面.html`、`/annotate-web https://…` 批注网页；`/annotate-web off` 撤销配对。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 发送并返回。
 - 写批注中途按 `Ctrl+S`，一步保存、返回并发送（中文输入法开着也有效）；`Ctrl+C` 返回后由 OpenCode 询问。

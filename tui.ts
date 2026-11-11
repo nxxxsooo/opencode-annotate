@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin/tui"
 import { createReviewCommand } from "./review.mjs"
 import { createAsciiHold, createInputSource } from "./input-source.mjs"
 import { createReferenceCommand } from "./reference-command.mjs"
+import { promptReferenceComment } from "./reference-comment.tsx"
 import { createAutoReview } from "./auto-review.mjs"
 import { watchConfiguration } from "./configuration.mjs"
 
@@ -27,7 +28,9 @@ export default Plugin.define({
       stopAutoReview = createAutoReview(context, review)
     }
     restartAutoReview()
-    const reference = createReferenceCommand(context)
+    const reference = createReferenceCommand(context, {
+      promptComment: (options, signal) => promptReferenceComment(context, options, signal),
+    })
     // Permission prompts answer with single letters, which an input method swallows.
     const hold = createAsciiHold(inputSource)
     const stopAsked = context.data.on("permission.asked", event => hold.enter(event.data.id))

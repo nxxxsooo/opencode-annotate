@@ -111,7 +111,7 @@ test("large messages have an exact continuation without losing Unicode or neighb
   await assert.rejects(readSession(client, { sessionID: "ses_source", messageID: "msg_large", offset: text.length }), /past the end/)
 })
 
-function commandHarness({ cancelPick = false, confirm = true, fail = false } = {}) {
+function commandHarness({ cancelPick = false, cancelComment = false, comment = "", confirm = true, fail = false } = {}) {
   let route = { type: "session", sessionID: "ses_destination" }
   const sent = [], notices = [], selections = [], confirmations = []
   const page = { data: [user("msg_question", "Old decision")], cursor: {} }
@@ -132,7 +132,11 @@ function commandHarness({ cancelPick = false, confirm = true, fail = false } = {
       },
     },
   }
-  const command = createReferenceCommand(context)
+  const command = createReferenceCommand(context, { promptComment: async (options, signal) => {
+    assert.equal(options.title, "Comment on reference (optional)")
+    assert.ok(signal instanceof AbortSignal)
+    return cancelComment ? undefined : comment
+  } })
   return { context, command, sent, notices, selections, confirmations }
 }
 
@@ -150,7 +154,7 @@ test("/ref disambiguates titles and attaches only to the captured session withou
 })
 
 test("/ref cancellation, empty results, disposal and failed delivery never report a successful attachment", async () => {
-  for (const options of [{ cancelPick: true }, { confirm: false }, { fail: true }, { empty: true }, { dispose: true }]) {
+  for (const options of [{ cancelPick: true }, { cancelComment: true }, { confirm: false }, { fail: true }, { empty: true }, { dispose: true }]) {
     const h = commandHarness(options)
     if (options.empty) h.context.client.session.list = async () => ({ data: [], cursor: {} })
     if (options.dispose) h.context.ui.dialog.confirm = async () => { h.command.dispose(); return true }
@@ -177,6 +181,18 @@ test("/ref supports explicit IDs, cross-project title search and search paginati
   assert.equal(requests[0].search, "previous design")
   assert.equal(requests[1].cursor, "more")
   assert.equal(h.sent.length, 2)
+  h.command.dispose()
+})
+
+test("/ref preserves multiline comments with blank lines and CJK text separately from historical context", async () => {
+  const comment = "First line\n\n保留多行留言与中文换行。".repeat(20) + "\nLast line"
+  const h = commandHarness({ comment: `  ${comment}  ` })
+  await h.command.run("ses_source")
+  assert.ok(h.sent[0].text.startsWith(`# My reference comment\n\n${comment}\n\n# Referenced conversation`))
+  assert.match(h.sent[0].text, /Old decision/)
+  assert.equal(h.sent[0].resume, false)
+  assert.equal(h.sent[0].delivery, "queue")
+  assert.equal(h.confirmations.length, 1)
   h.command.dispose()
 })
 

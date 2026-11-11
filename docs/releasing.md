@@ -1,5 +1,35 @@
 # Releasing
 
+## 0.13.1 — search discoverability — 2026-11-11
+
+This public-surface pass is based on the published 0.13.0 source, not the mixed
+development checkout. It changes README positioning, first-review instructions,
+authentic demo assets and npm search metadata; runtime behavior is unchanged.
+The published `/annotate-web` command, Safari's copy-only boundary and platform
+verification caveats remain explicit. No competitor superiority claim is made.
+
+GitHub's About description, relevant topics and README homepage link were updated
+and re-fetched. Search engines control recrawling and ranking; a successful public
+update does not establish a ranking improvement or refresh a cached snippet.
+Registry metadata changes take effect only with a new npm publication.
+
+The user explicitly approved a documentation/metadata-only 0.13.1 patch publication
+after CI. Version fields change together across npm, native crates and the browser
+manifest. Native binaries rebuild through the existing release workflow; the demo
+captures remain accurately labeled as published 0.13.0 UI. No runtime logic changes.
+The maintainer's development plugin path and options must stay intact.
+
+Before integration, the local 0.13.1 native build, 98 Node tests, package dry-run,
+21 isolated OpenCode smoke scenarios and reference suite passed. The unchanged
+0.13.0 browser runtime passed all 33 headless browser scenarios during capture.
+The GitHub Markdown API rendered the exact README; both local preview images decoded.
+Smoke/reference fixtures suppress model execution. Cross-platform and Safari build
+gates, public rendering and registry verification are checked during delivery.
+
+| Date | Decision | Basis |
+|---|---|---|
+| 2026-11-11 | Improve GitHub/npm discovery and show the real review workflow before building a separate website. | `annotate-search-discoverability-20261111` in [`sources.json`](../sources.json). |
+
 ## 0.13.0 — auto-sizing reference comments — 2026-11-11
 
 This release adds only the accepted optional `/ref` comment step and its auto-sizing

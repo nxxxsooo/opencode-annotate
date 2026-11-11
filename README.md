@@ -1,24 +1,107 @@
-# OpenCode Annotate
+# OpenCode Annotate — review AI replies, documents, and webpages
 
 [![npm](https://img.shields.io/npm/v/@nxxxsooo/opencode-annotate)](https://www.npmjs.com/package/@nxxxsooo/opencode-annotate)
 [![CI](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Annotate replies, documents, or live HTML pages, then send feedback to the originating OpenCode session.**
+**Annotate AI replies and Markdown documents in your terminal, or review webpages in your browser.** Select a passage or element, add feedback, and send it to the originating OpenCode conversation.
 
-Use `/ref` to bring a previous conversation into the current session, or let the agent
-find and read it through the bundled session-reference tools.
+This **unofficial OpenCode plugin** includes the native [terminal reviewer](tui/README.md): **no separate reviewer install is required**. The optional [browser companion](#browser-review-optional) adds Chrome delivery and Safari's copy-only review. Published on npm as `@nxxxsooo/opencode-annotate`.
 
-This is an **unofficial OpenCode plugin**. Its owned [terminal reviewer](tui/README.md)
-and [browser companion](browser/UPSTREAM.md) live together in this repository, alongside
-routing, native messaging, session targeting and confirmed feedback delivery.
+## Install
 
-Published on npm as `@nxxxsooo/opencode-annotate`. It replaces `opencode-plannotator-tui`
-(0.4.2 and earlier); to switch, run
-`opencode plugin remove opencode-plannotator-tui@latest` and then install this package as below.
+Requires **OpenCode 2.2.0+**. The npm package includes **Annotate TUI**, built from [`tui/`](tui/README.md) for macOS arm64/x64, Linux arm64/x64 and Windows x64. See its [platform requirements](tui/README.md#source-and-build). The OpenCode terminal handoff has been tested on macOS; Windows handoff has not yet been verified.
+
+```sh
+opencode plugin add @nxxxsooo/opencode-annotate@latest
+```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nxxxsooo/opencode-annotate/main/docs/assets/terminal-review.gif" alt="Bundled terminal reviewer selecting a passage in a Markdown plan and saving an inline comment" width="720">
+</p>
+
+The real bundled reviewer, using a synthetic Markdown plan. [Capture details](https://github.com/nxxxsooo/opencode-annotate/blob/main/docs/assets/README.md).
+
+OpenCode loads the server tools and TUI commands from one entry in your global **`opencode.json`** or **`opencode.jsonc`**. Run `/reload` if the command list has not refreshed.
+
+Manual configuration, preserving other entries:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["@nxxxsooo/opencode-annotate@latest"]
+}
+```
+
+`@latest` selects the current npm release when installing or updating; publishing a release does not itself replace an installed copy. Keep your existing plugin `options`.
+
+## First review in 3 steps
+
+1. **Open the reviewer** — run `/annotate` in any session to review the last completed assistant reply.
+2. **Select and comment** — drag to select text (or press `v` and move), then press `c` to comment. Press Enter to save the note.
+3. **Send** — press `q` to send your annotations back to the session. The feedback is submitted as a prompt to the originating conversation, resuming it for the assistant to act on.
+
+Empty and cancelled reviews submit nothing. Opening a review makes no model call.
+
+**`Ctrl+S`** saves the current comment and sends in one step. The header's **Send N back (q)** button does the same as `q`. **`Ctrl+C`** returns without sending, and OpenCode asks whether to send. `E` and `S` send as well, following any `[keys]` rebinding.
+
+## Workflows
+
+### Annotate AI responses
+
+`/annotate` opens the last completed reply. `/annotate-pick` chooses from recent replies and progress updates. `/annotate-selection` opens the message containing your last transcript selection. Reasoning, tool-call commentary, and in-progress messages are excluded.
+
+`/annotate-last` always reviews the latest completed reply; any supplied argument is ignored. For a selection that spans messages, `/annotate-selection` reviews just the selected text.
+
+### Review Markdown and text documents
+
+```text
+/annotate docs/plan.md            # Review a Markdown document
+/annotate "docs/release plan.md"  # Path with spaces
+/annotate ~/Documents/notes.txt   # Plain text
+```
+
+Local UTF-8 `.md`, `.mdx`, `.markdown` and `.txt` files up to 2 MiB. Relative paths resolve against the captured session's working directory, not the directory from which the terminal client happened to start. Absolute and `~/` paths work too. The file must exist on the machine running the terminal client.
+
+The reviewer reads a fixed snapshot and does not edit the original file. Feedback includes the original path and snapshot hash, with instructions to re-read the current file before applying suggestions. Document review works even before the session has an assistant reply.
+
+### Browser webpage feedback
+
+Run `/annotate-web` to pair the current session with the Chrome extension, then open the extension panel on any webpage. Select text or pick an element, write notes, and send them back to the paired session.
+
+```text
+/annotate-web                     # Pair this session
+/annotate-web page.html           # Review a local HTML file
+/annotate-web https://example.com # Review a webpage
+/annotate-web off                 # Revoke this session's browser pairing
+```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nxxxsooo/opencode-annotate/main/docs/assets/browser-review.png" alt="Chrome extension panel with a saved webpage comment and an explicit Send 1 note button" width="440">
+  <br>
+  <em>Real extension panel with synthetic page feedback; captured in an isolated headless tab.</em>
+</p>
+
+Browser setup is separate from the plugin install. Safari supports local notes and copying only; see [Browser review](#browser-review-optional) below.
+
+### Reference previous conversations
+
+Run `/ref` to search and attach a past conversation as context. The source is attached to the session where you invoked `/ref`, queued with `resume: false` so an idle assistant stays idle until your next prompt.
+
+```text
+/ref                             # Choose a conversation from this project
+/ref authentication              # Search titles in this project
+/ref --all authentication        # Search titles across projects
+/ref ses_…                       # Attach a specific conversation
+```
+
+Two Code Mode tools are registered for agent use: `annotate.session_search` and `annotate.session_read`.
+
+## Command reference
 
 ```text
 /annotate                         Review the last completed assistant reply
+/annotate-last                    Review the latest reply, ignoring arguments
 /annotate docs/plan.md            Review a Markdown document
 /annotate "docs/release plan.md"  Review a path containing spaces
 /annotate ~/Documents/notes.txt   Review a plain-text document
@@ -34,51 +117,13 @@ Published on npm as `@nxxxsooo/opencode-annotate`. It replaces `opencode-plannot
 /ref ses_…                       Attach a specific conversation
 ```
 
-`/annotate-last` always reviews the latest completed reply; any supplied argument is ignored.
+Numbered `/annotate N` is retired.
 
-Progress updates written during a long tool run are not replies, so `/annotate` skips them.
-Reach them with `/annotate-pick`, or drag over text in the transcript and run
-`/annotate-selection`: the plugin opens the reply or progress update containing that text,
-or just the selected text when it spans messages. Numbered `/annotate N` is retired.
+## Upgrading from the TUI-only package
 
-## Install
+`opencode-annotate` replaces `opencode-plannotator-tui` (0.4.2 and earlier). To switch, run `opencode plugin remove opencode-plannotator-tui@latest` and then install this package as shown above.
 
-Requires **OpenCode 2.2.0+**. The npm package includes **Annotate TUI**, built from
-[`tui/`](tui/README.md) for macOS arm64/x64, Linux arm64/x64 and Windows x64.
-See its [platform requirements](tui/README.md#source-and-build). The OpenCode terminal
-handoff has been tested on macOS; Windows handoff has not yet been verified.
-
-Install the plugin:
-
-```sh
-opencode plugin add @nxxxsooo/opencode-annotate@latest
-```
-
-Update an existing installation explicitly:
-
-```sh
-opencode plugin update @nxxxsooo/opencode-annotate@latest
-```
-
-`@latest` selects the current npm release when installing or updating; publishing a
-release does not itself replace an installed copy. Keep your existing plugin `options`.
-
-OpenCode loads the server tools and TUI commands from one entry in your global
-**`opencode.json`** or **`opencode.jsonc`**. Run `/reload` if the command list has not refreshed.
-
-Manual configuration, preserving other entries:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@nxxxsooo/opencode-annotate@latest"]
-}
-```
-
-**Upgrading from the TUI-only package:** move its entry from `cli.json` to
-`opencode.json(c)`, retaining the whole entry and any `options`. Keep one entry so
-the TUI is loaded once. A remaining CLI-only installation provides `/ref` and annotation
-commands, but cannot register the agent tools.
+Move its entry from `cli.json` to `opencode.json(c)`, retaining the whole entry and any `options`. Keep one entry so the TUI is loaded once. A remaining CLI-only installation provides `/ref` and annotation commands, but cannot register the agent tools.
 
 ## Reference another conversation
 
@@ -311,12 +356,6 @@ The manifest version alone cannot identify edits to an unpacked extension.
    Selecting never touches the clipboard; press `y` to copy the selected source and keep
    the selection for annotating.
 4. Press **`q`** to send your notes and return to OpenCode.
-
-**`Ctrl+S`** does the same mid-comment, saving the comment first. The header's **Send N back (q)**
-button does the same as `q`.
-**`Ctrl+C`** returns without sending, and OpenCode asks whether to send. `E` and `S` send as well,
-following any `[keys]` rebinding, and the clipboard copy and Review menu (resend, finish, archive) are hidden
-because OpenCode owns delivery.
 
 For real PNG toolbar artwork in a verified Kitty-graphics terminal, see the
 [local image-toolbar configuration](tui/README.md#local-image-toolbar-trial).

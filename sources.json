@@ -1,6 +1,37 @@
 {
   "sources": [
     {
+      "id": "published-review-demo-captures-20261111",
+      "title": "Synthetic review captures from the published 0.13.0 package",
+      "kind": "product-capture",
+      "url": "https://www.npmjs.com/package/@nxxxsooo/opencode-annotate/v/0.13.0",
+      "owner": "OpenCode Annotate maintainers",
+      "formed_at": "2026-11-11",
+      "received_at": "2026-11-11",
+      "status": "complete",
+      "source_commit": "d0f2077dedd519a00da3aca5c8de878edd47efe0",
+      "local_files": ["docs/assets/terminal-review.gif", "docs/assets/browser-review.png", "docs/assets/README.md", "scripts/demo"],
+      "sha256": {
+        "docs/assets/terminal-review.gif": "a35cf9342b9b857fb2f10edfec12d2046ec7b4d47a256cd994ca45630b88de5a",
+        "docs/assets/browser-review.png": "0505d0f58f11cd426ca588116c4485314ffcee3674213ebc467f462c2effd897"
+      },
+      "note": "Recorded the downloaded published native reviewer with VHS and the real unpacked Chrome extension with isolated headless Chromium. All document/page content, comments and destinations are synthetic. Browser capture shows panel.html in a background tab with a test receiver, not Chrome's native sidebar frame or a real model response. No feedback was sent, no private transcript or third-party toolbar artwork was captured. Reproduction and limits are in docs/assets/README.md."
+    },
+    {
+      "id": "annotate-search-discoverability-20261111",
+      "title": "Improve discovery for OpenCode Annotate searches",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-11-11",
+      "received_at": "2026-11-11",
+      "status": "partial",
+      "local_files": ["README.md", "package.json", "docs/assets/README.md", "docs/releasing.md"],
+      "quote": "my annotate clearly outperforms others when people can search for opencoe annotate, lets seo",
+      "confirmation": "执行",
+      "publication_confirmation": "Publish patch (Recommended)",
+      "note": "Approved the proposed GitHub/npm-first discoverability pass: clearer positioning, relevant metadata, authentic demo captures and concise workflows. The user's report that leading search results do not work well is personal experience, not an independently verified competitor benchmark. Exact session/message IDs are unavailable in this harness. No standalone website or unrelated unpublished runtime changes are included."
+    },
+    {
       "id": "real-image-toolbar-trial-20261110",
       "title": "Render selected local artwork in the native annotation toolbar",
       "kind": "chat-message",

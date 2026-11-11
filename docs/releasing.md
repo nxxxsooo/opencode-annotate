@@ -34,6 +34,23 @@ and repeated references from home before a first message. These fixtures do not 
 model. The accepted reference runtime, formatter and unit tests match the tested
 development files byte-for-byte; browser/TUI differences are version fields only.
 
+Published receipt: [PR #5](https://github.com/nxxxsooo/opencode-annotate/pull/5) merged
+as `52064e5b73a2737ccd5d34c325ddef8260eaf96f`, the immutable `v0.14.0` tag target.
+PR/main/publish runs `43005528968`, `43006832084` and `43007514372` succeeded. npm
+`0.14.0` is `latest`, with matching gitHead and signed-provenance metadata; the
+[GitHub Release](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.14.0)
+is public. The downloaded archive passed SHA-512 integrity, all 73 package/source
+entries and all five executable checks. Its reference suite and all 21 isolated
+OpenCode smoke scenarios passed again, without a model turn.
+
+The maintainer remains on the development plugin path with existing options intact.
+Version fields and its locally rebuilt reviewer are 0.14.0; all 181 development-tree
+Node tests, package checks and reference smoke pass. The local executable intentionally
+retains unpublished development behavior and is not asserted byte-identical to CI.
+No global configuration, local artwork or installed Safari app was changed. Private
+logs, registry archive/checksums and the final receipt are in `.local/releases/0.14.0/`.
+This receipt follow-up is documentation-only; the published tag/package remain unchanged.
+
 | Date | Decision | Basis |
 |---|---|---|
 | 2026-11-11 | Release the tested reference flow as a single normal prompt, including its inline-review and fresh-session prerequisites; preserve unrelated development work. | `reference-prompt-release-20261111` in the source register; exact message IDs unavailable. |

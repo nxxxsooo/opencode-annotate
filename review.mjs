@@ -188,14 +188,15 @@ export function createReviewCommand(context, options = {}) {
   // run, so keep the last one per session.
   context.renderer.on("selection", remember)
 
-  async function start(resolve, { automatic, home = false } = {}) {
+  async function start(resolve, { automatic, home = false, sessionID: capturedSessionID, submission } = {}) {
     if (disposed) return
     if (automatic && (active || !automatic())) return
     if (active) return notice("An annotation is already in progress.")
     // Capture before the first await: changing tabs must never redirect a review.
     const route = context.ui.router.current()
-    if (route.type !== "session" && !(home && route.type === "home")) return notice("Open a session first.")
-    const sessionID = route.type === "session" ? route.sessionID : undefined
+    if (capturedSessionID === undefined && route.type !== "session" && !(home && route.type === "home")) return notice("Open a session first.")
+    // null: the submission creates its destination only after confirmation.
+    const sessionID = capturedSessionID === undefined ? (route.type === "session" ? route.sessionID : undefined) : capturedSessionID ?? undefined
     const controller = new AbortController()
     active = controller
     let directory
@@ -204,7 +205,7 @@ export function createReviewCommand(context, options = {}) {
       const source = await resolve({ sessionID, signal: controller.signal })
       if (controller.signal.aborted || !source) return
       if (automatic && !automatic()) return
-      const title = context.data.session.get(sessionID)?.title ?? sessionID
+      const title = submission?.title ?? context.data.session.get(sessionID)?.title ?? sessionID
 
       directory = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "opencode-annotate-"))
       keepDraft = true
@@ -284,17 +285,17 @@ export function createReviewCommand(context, options = {}) {
         : source.selection
           ? "Here are my annotations on text I selected in this session. Please address the feedback."
           : `Here are my annotations on your ${source.progress ? "progress update" : "reply"} ${source.id}. Please address the feedback.`
-      const text = `${subject}\n\n${feedback}`
+      const text = submission ? submission.text(feedback) : `${subject}\n\n${feedback}`
       const feedbackPath = path.join(directory, "feedback.md")
       await writeFile(feedbackPath, text, { mode: 0o600 })
       const count = (feedback.match(/^## Annotation /gm) ?? []).length
-      const skills = await whatSkills(context.client, context.options.whatSkill, feedback, sessionID, controller.signal)
+      const skills = submission ? [] : await whatSkills(context.client, context.options.whatSkill, feedback, sessionID, controller.signal)
       const intent = await readFile(intentPath, "utf8").catch(error => {
         if (error.code === "ENOENT") return ""
         throw error
       })
       // Pressing send in the TUI is the explicit confirmation; quitting asks here.
-      const confirmed = intent.trim() === "send" || await context.ui.dialog.confirm({
+      const confirmed = intent.trim() === "send" || await context.ui.dialog.confirm(submission?.confirm({ count, title }) ?? {
         title: "Send annotations?",
         message: `${source.filePath ? `Document: ${source.filePath}\n` : ""}Send ${count} ${count === 1 ? "annotation" : "annotations"} to "${title}" and let the assistant continue?`,
         label: { confirm: "Send and continue", cancel: "Cancel" },
@@ -304,16 +305,20 @@ export function createReviewCommand(context, options = {}) {
         keepDraft = archived > 0
         return notice(`Sending cancelled.${retainedArchive}`)
       }
-      // An idle session starts queued input at once, but OpenCode's prompt can still list it
-      // as queued; an empty Enter then tries to steer it and fails with a 409. Steering an
-      // idle session is equivalent and never listed as queued. A busy turn keeps the queue.
-      const busy = (context.data.session.status?.(sessionID) ?? "running") !== "idle"
-      await context.client.session.prompt({
-        sessionID, id: promptID, text, delivery: busy ? "queue" : "steer", resume: true,
-        ...(skills.length ? { skills } : {}),
-      })
+      if (submission) await submission.deliver({ sessionID, id: promptID, text })
+      else {
+        // An idle session starts queued input at once, but OpenCode's prompt can still list it
+        // as queued; an empty Enter then tries to steer it and fails with a 409. Steering an
+        // idle session is equivalent and never listed as queued. A busy turn keeps the queue.
+        const busy = (context.data.session.status?.(sessionID) ?? "running") !== "idle"
+        await context.client.session.prompt({
+          sessionID, id: promptID, text, delivery: busy ? "queue" : "steer", resume: true,
+          ...(skills.length ? { skills } : {}),
+        })
+      }
       keepDraft = archived > 0
-      notice(`Sent ${count} ${count === 1 ? "annotation" : "annotations"}.${retainedArchive}`, "success")
+      const delivered = submission?.success?.(count) ?? `Sent ${count} ${count === 1 ? "annotation" : "annotations"}.`
+      notice(`${delivered}${retainedArchive}`, "success")
     } catch (error) {
       if (!disposed) {
         const detail = error?.code === "ENOENT"
@@ -391,8 +396,10 @@ export function createReviewCommand(context, options = {}) {
     }, { home: target !== "web off" })
   }
 
+  const snapshot = (sessionID, source, submission) => start(async () => source, { sessionID, submission })
+
   return {
-    run, auto, pick, selection: annotateSelection, web: webReview,
+    run, auto, pick, snapshot, selection: annotateSelection, web: webReview,
     dispose() {
       context.renderer.off("selection", remember)
       disposed = true

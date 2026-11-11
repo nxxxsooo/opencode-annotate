@@ -96,12 +96,13 @@ Browser setup is separate from the plugin install. Safari supports local notes a
 
 ### Reference previous conversations
 
-Run `/ref` to search and attach a past conversation as context. The source is queued with `resume: false` so an idle assistant stays idle until your next prompt.
+Run `/ref` to search and attach a past conversation with optional comments and inline annotations as one ordinary user prompt. Confirmation continues an established conversation; before your first message, references wait with `resume: false` for your next prompt.
 
 ```text
 /ref                             # Choose a conversation from this project
 /ref authentication              # Search titles in this project
 /ref --all authentication        # Search titles across projects
+/ref --tui authentication        # Annotate the reference snapshot in the TUI
 /ref ses_…                       # Attach a specific conversation
 ```
 
@@ -124,6 +125,7 @@ Two Code Mode tools are registered for agent use: `annotate.session_search` and 
 /ref                             Choose a conversation from this project
 /ref authentication              Search conversation titles in this project
 /ref --all authentication        Search titles across projects
+/ref --tui authentication        Annotate the reference snapshot in the TUI
 /ref ses_…                       Attach a specific conversation
 ```
 
@@ -137,9 +139,13 @@ Move its entry from `cli.json` to `opencode.json(c)`, retaining the whole entry 
 
 ## Reference another conversation
 
-Run `/ref` or `/ref <title words>`, select the source, add an optional comment, then choose **Attach reference**. The comment field grows as you type or paste, wraps long lines, and scrolls at a screen-aware height limit. **Shift+Enter** adds a line, **Enter** continues to confirmation, and **Esc** cancels. The confirmation names both conversations and shows whether the text is an excerpt. The source is attached to the session where you invoked `/ref`, even if you switch tabs. It is queued as historical context with `resume: false`: an idle assistant stays idle until your next prompt. An already-running session can consume it at a later queue boundary.
+Run `/ref` or `/ref <title words>`, select the source, add an optional whole-reference comment, then choose **Attach and continue**. For inline marks, press **Ctrl+T** in the source chooser (or run `/ref --tui <title words>`) to annotate the snapshot in the existing TUI. The source snapshot, comment and annotations are submitted together as one ordinary user prompt, not a compact reference item. The confirmation names both conversations and shows whether the text is an excerpt. The source is attached to the session where you invoked `/ref`, even if you switch tabs.
 
-Search defaults to the current session's project, including its worktrees. `/ref --all` searches every project on the connected server. Titles can be ambiguous, so title searches always show a chooser with directory, time and session ID. An exact `ses_…` ID selects that source directly, including a source in another project.
+The comment field grows as you type or paste, wraps long lines, and scrolls at a screen-aware height limit. **Shift+Enter** adds a line, **Enter** continues to confirmation, and **Esc** cancels without attaching anything. Confirming continues the conversation automatically (`delivery: "steer"`, `resume: true`): an idle assistant starts immediately, while a running assistant receives the reference and feedback at its next processing boundary. The quoted conversation remains historical source material.
+
+Before your first message, **Attach** adds the reference with `resume: false`, and the assistant reads it with the message you write next. Run `/ref` again to add more. On OpenCode home, `/ref` searches the home directory's project and creates the new session (same directory and model) only after you confirm, then opens it. Cancelling leaves no empty session.
+
+Search defaults to the current session's project, including its worktrees. `/ref --all` searches every project on the connected server. In the chooser, **Ctrl+A** switches between this project and all projects and reruns the same title query. The wide chooser gives titles the remaining space beside right-aligned, shortened directory tails; the confirmation retains the full directory. An exact `ses_…` ID selects that source directly, including a source in another project.
 
 The server part adds two Code Mode tools:
 
@@ -159,7 +165,7 @@ Permission actions are `annotate_session_search` (project ID, or `*` for cross-p
 <details>
 <summary id="reference-verification">Reference verification</summary>
 
-`npm run test:references` exercises the server tools and `/ref` against source or an extracted npm package. The checks cover pre-compaction history, API responses larger than 256 KiB, pagination, long-message continuation, attachment and cancellation without a model turn. Unit checks also cover tab changes, permission denial and private-file cleanup.
+`npm run test:references` exercises the server tools and `/ref` against source or an extracted npm package. The checks cover pre-compaction history, API responses larger than 256 KiB, pagination, long-message continuation, attachment and cancellation. The fixture records the production `steer`/`resume` request, then forces `resume: false` to avoid a model turn. Unit checks also cover tab changes, permission denial and private-file cleanup.
 
 Recovery starts in `reference-command.mjs` for `/ref`, `session-tools.mjs` for agent tools, and `session-reference.mjs` for bounded history. `server-history.mjs` captures CLI output in private temporary files to avoid v2.2.0 pipe truncation, then removes them. Regression entrypoints are `session-reference.test.mjs`, `server-history.test.mjs` and `tests/references-smoke.py`; release ownership remains in [docs/releasing.md](docs/releasing.md).
 </details>
@@ -382,7 +388,7 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate-pick`：从最近的回复和运行中的进度说明里选一条批注。
 - `/annotate-selection`：先在会话里拖选文字，再批注包含这段文字的消息。
 - `/annotate-last`：固定批注最新一条完整回复，忽略附带参数。
-- `/ref`：选择并引用同项目的历史会话，可附留言；留言框随内容自动增高、换行，超长时滚动。Shift+Enter 换行，Enter 进入确认，Esc 取消。`/ref --all 关键词` 跨项目搜索；`/ref ses_…` 直接指定。确认后附加上下文，不启动空闲助手。
+- `/ref`：选择并引用同项目的历史会话，可附整段评论；选择器中按 `Ctrl+A` 切换项目范围，按 `Ctrl+T` 打开 TUI 添加逐段批注；`/ref --all 关键词` 跨项目搜索；`/ref --tui 关键词` 直接进入 TUI 流程；`/ref ses_…` 直接指定。快照、评论和批注合并为一条普通用户提示，确认后继续对话；在首条消息之前（包括 OpenCode 首页，确认后才新建会话），只附加不启动助手，可多次引用后再开口。
 - `/annotate-web`：配对 Chrome；空白首页会先创建空会话，无需先发提示词。`/annotate-web 页面.html`、`/annotate-web https://…` 批注网页；`/annotate-web off` 撤销配对。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 发送并返回。
 - 写批注中途按 `Ctrl+S`，一步保存、返回并发送（中文输入法开着也有效）；`Ctrl+C` 返回后由 OpenCode 询问。

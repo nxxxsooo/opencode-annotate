@@ -1,5 +1,43 @@
 # Releasing
 
+## 0.14.0 — references as prompts — 2026-11-11
+
+Authority: `reference-prompt-release-20261111` in [`sources.json`](../sources.json).
+The user tested the development change, confirmed “it worked”, then requested shipment.
+This release isolates the accepted `/ref` flow from the mixed development checkout.
+
+The bounded conversation snapshot, optional comment and TUI annotations are delivered
+as one ordinary user prompt, retaining provenance, confirmation and captured-session
+targeting. **Ctrl+T** and `--tui` review the snapshot in the existing bundled reviewer.
+Confirmed references use `steer` / `resume: true` in an established conversation; before
+the first user message they use `resume: false`, allowing repeated references first.
+From OpenCode home, session creation is deferred until confirmed delivery.
+
+Only the required reference/snapshot integration is included. Existing `/annotate`,
+`/annotate-web`, `/annotate-last`, browser registration and annotation delivery remain
+unchanged. The hc coordinator, Chrome session-picker work, browser command consolidation
+and other unpublished changes are excluded. Rust behavior is unchanged; native binaries
+are rebuilt with version 0.14.0. No third-party artwork or local settings are distributed.
+
+Distribution surfaces are source/tag, GitHub Release and npm with all five native
+executables. The maintainer's plugin continues to load the development checkout so
+unrelated unpublished work and options are preserved; its bundled reviewer is refreshed
+separately. Smoke fixtures record production continuation intent before suppressing
+model execution. Final CI, artifact and installation verification are recorded below
+after publication.
+
+Candidate verification: local 0.14.0 native build, all 403 Rust tests with formatting
+and Clippy, all 107 Node tests, package dry-run and package-comparison regression pass.
+All 21 isolated OpenCode smoke scenarios and the reference suite pass on OpenCode 2.2.7,
+including whole-reference comments, prompt admission, cancellation, cross-project scope
+and repeated references from home before a first message. These fixtures do not run a
+model. The accepted reference runtime, formatter and unit tests match the tested
+development files byte-for-byte; browser/TUI differences are version fields only.
+
+| Date | Decision | Basis |
+|---|---|---|
+| 2026-11-11 | Release the tested reference flow as a single normal prompt, including its inline-review and fresh-session prerequisites; preserve unrelated development work. | `reference-prompt-release-20261111` in the source register; exact message IDs unavailable. |
+
 ## Public presentation follow-up — 2026-11-11
 
 After 0.13.1 was published and the public package verified, the user authorized

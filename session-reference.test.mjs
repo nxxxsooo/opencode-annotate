@@ -111,45 +111,210 @@ test("large messages have an exact continuation without losing Unicode or neighb
   await assert.rejects(readSession(client, { sessionID: "ses_source", messageID: "msg_large", offset: text.length }), /past the end/)
 })
 
-function commandHarness({ cancelPick = false, cancelComment = false, comment = "", confirm = true, fail = false } = {}) {
-  let route = { type: "session", sessionID: "ses_destination" }
-  const sent = [], notices = [], selections = [], confirmations = []
+function commandHarness({ cancelPick = false, cancelComment = false, confirm = true, fail = false, comment = "", review, spoken = true, home = false } = {}) {
+  let route = home ? { type: "home" } : { type: "session", sessionID: "ses_destination" }
+  const sent = [], notices = [], selections = [], confirmations = [], presentations = [], prompts = [], created = [], navigations = [], locations = []
   const page = { data: [user("msg_question", "Old decision")], cursor: {} }
-  const client = clientFor([page, page])
-  client.session.list = async () => ({ data: [session(), session("ses_sameTitle")], cursor: {} })
-  client.session.synthetic = async input => {
+  const client = clientFor([page, page, page])
+  const history = client.message.list
+  client.message.list = async (input, options) => {
+    if (input.type !== "user") return history(input, options)
+    assert.equal(input.sessionID, "ses_destination")
+    assert.equal(input.limit, 1)
+    return { data: spoken ? [user("msg_spoken", "Hello")] : [], cursor: {} }
+  }
+  const projectID = home ? "home-project" : "project"
+  client.session.list = async () => ({ data: [session("ses_source", projectID), session("ses_sameTitle", projectID)], cursor: {} })
+  client.session.prompt = async input => {
     if (fail) throw new Error("Source server disconnected")
+    assert.ok(!Object.hasOwn(input, "description"), "session.prompt must not receive a description field")
     sent.push(input)
   }
+  client.session.synthetic = async () => { throw new Error("References must use session.prompt, not session.synthetic") }
+  client.session.create = async input => {
+    created.push(input)
+    return { ...session("ses_destination", "home-project"), title: "New session", location: input.location }
+  }
+  client.location = { get: async input => {
+    locations.push(input)
+    return { directory: input.location.directory, project: { id: "home-project" } }
+  } }
   const context = {
     client,
+    location: { directory: "/home-dir" },
     ui: {
-      router: { current: () => route },
+      model: { current: () => ({ providerID: "fixture", modelID: "model", variant: "high" }) },
+      router: { current: () => route, navigate: next => { navigations.push(next); route = next } },
       toast: { show: input => notices.push(input) },
       dialog: {
-        select: async input => { selections.push(input); route = { type: "session", sessionID: "ses_otherTab" }; return cancelPick ? undefined : "ses_source" },
+        clear() {},
+        set: input => presentations.push(input),
+        select: async input => { selections.push(input); if (!home) route = { type: "session", sessionID: "ses_otherTab" }; return cancelPick ? undefined : "ses_source" },
+        prompt: async input => { prompts.push(input); return cancelComment ? undefined : comment },
         confirm: async input => { confirmations.push(input); return confirm },
       },
     },
   }
-  const command = createReferenceCommand(context, { promptComment: async (options, signal) => {
-    assert.equal(options.title, "Comment on reference (optional)")
-    assert.ok(signal instanceof AbortSignal)
-    return cancelComment ? undefined : comment
-  } })
-  return { context, command, sent, notices, selections, confirmations }
+  const command = createReferenceCommand(context, { review, promptComment: context.ui.dialog.prompt })
+  return { context, command, sent, notices, selections, confirmations, presentations, prompts, created, navigations, locations }
 }
 
-test("/ref disambiguates titles and attaches only to the captured session without a model turn", async () => {
+test("/ref from OpenCode home searches its project and creates the session only on confirmation, without starting a turn", async () => {
+  const cancelled = commandHarness({ home: true, confirm: false })
+  await cancelled.command.run("design")
+  assert.equal(cancelled.confirmations.length, 1)
+  assert.deepEqual(cancelled.created, [], "cancelling leaves no empty session behind")
+  assert.deepEqual(cancelled.sent, [])
+  const h = commandHarness({ home: true, comment: "Background for my question." })
+  const searches = []
+  h.context.client.session.list = async input => {
+    searches.push(input)
+    return { data: [session("ses_source", "home-project"), session("ses_sameTitle", "home-project")], cursor: {} }
+  }
+  await h.command.run("design")
+  assert.deepEqual(h.locations, [{ location: { directory: "/home-dir" } }])
+  assert.equal(searches[0].project, "home-project")
+  assert.equal(h.selections[0].options.length, 2)
+  assert.equal(h.confirmations[0].label.confirm, "Attach")
+  assert.match(h.confirmations[0].message, /To: New session\n\/home-dir/)
+  assert.deepEqual(h.created, [{ location: { directory: "/home-dir" }, model: { providerID: "fixture", id: "model", variant: "high" } }])
+  assert.deepEqual(h.navigations, [{ type: "session", sessionID: "ses_destination" }])
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent[0].sessionID, "ses_destination")
+  assert.equal(h.sent[0].resume, false)
+  assert.match(h.sent[0].text, /^# My reference comment\n\nBackground for my question\.[\s\S]*Old decision/)
+  assert.match(h.notices.at(-1).message, /Write your message to start/)
+  h.command.dispose()
+})
+
+test("/ref before the first message attaches without continuing, so references can be added repeatedly", async () => {
+  const h = commandHarness({ spoken: false })
+  await h.command.run("ses_source")
+  await h.command.run("ses_source")
+  assert.equal(h.sent.length, 2)
+  assert.deepEqual(h.sent.map(input => [input.sessionID, input.resume, input.delivery]), [["ses_destination", false, "steer"], ["ses_destination", false, "steer"]])
+  assert.deepEqual(h.created, [])
+  assert.equal(h.confirmations[0].label.confirm, "Attach")
+  h.command.dispose()
+})
+
+test("/ref --tui from home annotates first and creates the session only when delivering", async () => {
+  const snapshots = []
+  const review = { snapshot: async (...input) => snapshots.push(input) }
+  const h = commandHarness({ home: true, review })
+  await h.command.run("--tui ses_source")
+  const [sessionID, , submission] = snapshots[0]
+  assert.equal(sessionID, null)
+  assert.equal(submission.title, "New session")
+  assert.equal(submission.confirm({ count: 1, title: submission.title }).label.confirm, "Attach")
+  assert.deepEqual(h.created, [])
+  await submission.deliver({ id: "msg_annotated", text: "annotated" })
+  assert.equal(h.created.length, 1)
+  assert.equal(h.sent[0].sessionID, "ses_destination")
+  assert.equal(h.sent[0].resume, false)
+  h.command.dispose()
+})
+
+test("/ref disambiguates titles and continues only the captured session", async () => {
   const h = commandHarness()
   await h.command.run("design")
   assert.equal(h.selections[0].options.length, 2)
   assert.equal(h.sent.length, 1)
   assert.equal(h.sent[0].sessionID, "ses_destination")
-  assert.equal(h.sent[0].resume, false)
-  assert.equal(h.sent[0].delivery, "queue")
+  assert.equal(h.sent[0].resume, true)
+  assert.equal(h.sent[0].delivery, "steer")
+  assert.equal(h.confirmations[0].label.confirm, "Attach and continue")
   assert.equal(h.sent[0].metadata.annotateReference.sessionID, "ses_source")
+  const capturedMatch = h.sent[0].text.match(/Captured: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/)
+  assert.ok(capturedMatch, "text must include captured timestamp")
+  assert.equal(h.sent[0].metadata.annotateReference.capturedAt, capturedMatch[1], "metadata.capturedAt must match text timestamp")
   assert.match(h.sent[0].text, /Old decision/)
+  h.command.dispose()
+})
+
+test("/ref continues with the whole-reference comment and historical context together", async () => {
+  const h = commandHarness({ comment: "  Focus on the taxonomy decision.  " })
+  await h.command.run("ses_source")
+  assert.equal(h.prompts[0].title, "Comment on reference (optional)")
+  assert.match(h.sent[0].text, /^# My reference comment\n\nFocus on the taxonomy decision\./)
+  assert.match(h.sent[0].text, /# Referenced conversation/)
+  assert.equal(h.sent[0].resume, true)
+  assert.equal(h.sent[0].delivery, "steer")
+  h.command.dispose()
+})
+
+test("/ref preserves multiline comments, blank lines and wrapped CJK text", async () => {
+  const comment = "First line\n\n保留多行留言与中文换行。".repeat(20) + "\nLast line"
+  const h = commandHarness({ comment })
+  await h.command.run("ses_source")
+  assert.ok(h.sent[0].text.startsWith(`# My reference comment\n\n${comment}\n`))
+  assert.equal(h.confirmations.length, 1)
+  h.command.dispose()
+})
+
+test("/ref can annotate the captured snapshot in the TUI and attach the combined result", async () => {
+  const snapshots = []
+  const review = { snapshot: async (...input) => snapshots.push(input) }
+  const h = commandHarness({ comment: "Use this as background.", review })
+  h.context.ui.dialog.select = async input => {
+    h.selections.push(input)
+    input.actions.find(action => action.bind === "ctrl+t").onTrigger("ses_source")
+  }
+  await h.command.run("design")
+  assert.deepEqual(h.sent, [])
+  assert.equal(snapshots.length, 1)
+  const [sessionID, source, submission] = snapshots[0]
+  assert.equal(sessionID, "ses_destination")
+  assert.match(source.text, /Use this as background\./)
+  assert.match(source.text, /Old decision/)
+  const text = submission.text("# Annotations on referenced-conversation.md\n\n## Annotation 1\n> Clarify this")
+  assert.match(text, /Old decision[\s\S]*# Annotations on referenced-conversation\.md/)
+  assert.equal(submission.confirm({ count: 1, title: "Current" }).label.confirm, "Attach and continue")
+  await submission.deliver({ id: "msg_annotated", text })
+  assert.equal(h.sent[0].id, "msg_annotated", "TUI deliver must pass the exact message id")
+  assert.match(h.sent[0].text, /^# My reference comment\n\nUse this as background\./, "combined source-comment-annotation text")
+  assert.match(h.sent[0].text, /Old decision/, "TUI text includes source conversation")
+  assert.match(h.sent[0].text, /# Annotations on referenced-conversation\.md/, "TUI text includes annotations")
+  assert.match(h.sent[0].text, /> Clarify this/, "TUI text includes annotation content")
+  assert.equal(h.sent[0].sessionID, "ses_destination")
+  assert.equal(h.sent[0].delivery, "steer")
+  assert.equal(h.sent[0].resume, true)
+  assert.equal(submission.success(1), "Attached 1 reference annotation. Continuing the conversation.")
+  await h.command.run("--all --tui ses_source")
+  assert.equal(snapshots.length, 2, "--tui also works with an explicit session ID")
+  h.command.dispose()
+})
+
+test("/ref picker uses native title and directory columns while confirmation keeps the full path", async () => {
+  const h = commandHarness()
+  const source = {
+    ...session(),
+    location: { directory: "/Users/mingjian/Documents/sync/GitHub/opencode-annotate" },
+  }
+  const windows = {
+    ...session("ses_windows"), title: "标题",
+    location: { directory: String.raw`C:\Users\mingjian\Documents\sync\GitHub\another` },
+  }
+  h.context.client.session.list = async () => ({ data: [source, windows], cursor: {} })
+  h.context.client.session.get = async ({ sessionID }) => sessionID === source.id ? source : session(sessionID)
+  await h.command.run("design")
+  const options = h.selections[0].options
+  assert.deepEqual(h.presentations, [{ size: "xlarge" }])
+  assert.equal(options[0].title, "Previous design")
+  assert.equal(options[0].footer, "sync/opencode-annotate")
+  assert.equal(options[1].title, "标题")
+  assert.equal(options[1].footer, String.raw`sync\GitHub\another`)
+  assert.match(h.confirmations[0].message, /\/Users\/mingjian\/Documents\/sync\/GitHub\/opencode-annotate/)
+  h.command.dispose()
+})
+
+test("/ref leaves dynamic width allocation to native title and footer columns", async () => {
+  const h = commandHarness()
+  h.context.client.session.list = async () => ({ data: [session()], cursor: {} })
+  await h.command.run("design")
+  assert.equal(h.selections[0].options[0].title, "Previous design")
+  assert.equal(h.selections[0].options[0].footer, "/source")
+  assert.equal(h.selections[0].options[0].description, undefined)
   h.command.dispose()
 })
 
@@ -184,15 +349,28 @@ test("/ref supports explicit IDs, cross-project title search and search paginati
   h.command.dispose()
 })
 
-test("/ref preserves multiline comments with blank lines and CJK text separately from historical context", async () => {
-  const comment = "First line\n\n保留多行留言与中文换行。".repeat(20) + "\nLast line"
-  const h = commandHarness({ comment: `  ${comment}  ` })
-  await h.command.run("ses_source")
-  assert.ok(h.sent[0].text.startsWith(`# My reference comment\n\n${comment}\n\n# Referenced conversation`))
-  assert.match(h.sent[0].text, /Old decision/)
-  assert.equal(h.sent[0].resume, false)
-  assert.equal(h.sent[0].delivery, "queue")
-  assert.equal(h.confirmations.length, 1)
+test("/ref scope action reruns the same query between project and all projects", async () => {
+  const h = commandHarness(), requests = []
+  h.context.client.session.list = async input => {
+    requests.push(input)
+    return { data: [session()], cursor: {} }
+  }
+  h.context.ui.dialog.clear = () => {}
+  h.context.ui.dialog.select = async input => {
+    h.selections.push(input)
+    if (h.selections.length < 3) {
+      input.actions[0].onTrigger()
+      return undefined
+    }
+    return "ses_source"
+  }
+  await h.command.run("design")
+  assert.deepEqual(requests.map(request => request.project), ["project", undefined, "project"])
+  assert.deepEqual(requests.map(request => request.search), ["design", "design", "design"])
+  assert.deepEqual(h.selections.map(selection => selection.actions[0].title), ["All projects", "This project", "All projects"])
+  assert.match(h.selections[0].title, /This project/)
+  assert.match(h.selections[1].title, /All projects/)
+  assert.equal(h.sent.length, 1)
   h.command.dispose()
 })
 

@@ -29,7 +29,7 @@ export default Plugin.define({
     }
     restartAutoReview()
     const reference = createReferenceCommand(context, {
-      promptComment: (options, signal) => promptReferenceComment(context, options, signal),
+      review, promptComment: (options, signal) => promptReferenceComment(context, options, signal),
     })
     // Permission prompts answer with single letters, which an input method swallows.
     const hold = createAsciiHold(inputSource)
@@ -86,7 +86,7 @@ export default Plugin.define({
           }, {
             id: "opencode-annotate.ref",
             title: "Reference another conversation",
-            description: "Attach a past conversation by title or session ID; --all searches across projects",
+            description: "Attach a past conversation with a comment or TUI annotations; --all searches across projects",
             group: "Annotate",
             palette: true,
             slash: { name: "ref", arguments: true },

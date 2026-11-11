@@ -1,6 +1,20 @@
 {
   "sources": [
     {
+      "id": "reference-prompt-release-20261111",
+      "title": "Ship referenced conversations and annotations as one prompt",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-11-11",
+      "received_at": "2026-11-11",
+      "status": "partial",
+      "local_files": ["reference-command.mjs", "session-reference.mjs", "review.mjs", "README.md", "docs/releasing.md"],
+      "quote": "update ref，把引用对话和批注变成一段prompt注入而不是一个小条",
+      "confirmation": "it worked",
+      "publication_confirmation": "@mj-ship",
+      "note": "The user tested and accepted the development /ref prompt change, then authorized end-to-end delivery. Scope is the reference flow with combined snapshot, comment and optional inline annotations, explicit confirmation, captured destination and existing fresh/established-session behavior. Excludes unrelated browser, hc and general annotation-delivery changes. Exact session/message IDs are unavailable; partial records that provenance gap, not uncertainty about approval."
+    },
+    {
       "id": "annotate-public-presentation-20261111",
       "title": "Polish GitHub Markdown and create the Annotate landing",
       "kind": "chat-message",

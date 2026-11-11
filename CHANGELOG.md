@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0 — auto-sizing reference comments
+
+- Add an optional whole-reference comment to `/ref`, kept separate from quoted history.
+- Grow and shrink the comment field with its content, wrap long lines, and scroll within
+  a terminal-aware height limit. Multiline paste and Chinese text retain their line breaks.
+- Use **Shift+Enter** for a new line, **Enter** to continue to confirmation, and **Esc** to
+  cancel. References still queue for the next prompt without starting a model turn.
+
 ## 0.12.0 — Safari companion and compact review toolbar
 
 - Add a Safari Web Extension companion built from the shared browser sources, with a

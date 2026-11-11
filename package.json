@@ -1,6 +1,6 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, and reference previous conversations.",
   "license": "MIT",
   "type": "module",
@@ -39,6 +39,7 @@
     "server-history.mjs",
     "session-reference.mjs",
     "reference-command.mjs",
+    "reference-comment.tsx",
     "review.mjs",
     "auto-review.mjs",
     "configuration.mjs",
@@ -68,10 +69,22 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@opencode/plugin": ">=2.2.0 <3"
+    "@opencode/plugin": ">=2.2.0 <3",
+    "@opentui/core": ">=0.6.6",
+    "@opentui/solid": ">=0.6.6",
+    "solid-js": ">=1.9.0"
   },
   "peerDependenciesMeta": {
     "@opencode/plugin": {
+      "optional": true
+    },
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
       "optional": true
     }
   },

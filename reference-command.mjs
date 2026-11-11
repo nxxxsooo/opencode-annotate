@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { readSession, referenceMarkdown, searchSessions } from "./session-reference.mjs"
 
-export function createReferenceCommand(context) {
+export function createReferenceCommand(context, { promptComment }) {
   let active
   let disposed = false
   const notice = (message, variant = "info") => context.ui.toast.show({
@@ -54,6 +54,12 @@ export function createReferenceCommand(context) {
       const reference = await readSession(context.client, { sessionID: sourceID }, signal)
       signal.throwIfAborted()
       if (!reference.messages.length) return notice("No completed user or assistant text in this history range. Use annotate.session_read to inspect older pages.")
+      const comment = await promptComment({
+        title: "Comment on reference (optional)",
+        placeholder: "How should the assistant use this conversation?",
+      }, signal)
+      signal.throwIfAborted()
+      if (comment == null) return
       const shortened = reference.nextCursor || reference.messages.some(message => message.nextOffset !== null)
       const confirmed = await context.ui.dialog.confirm({
         title: "Attach conversation reference?",
@@ -64,7 +70,7 @@ export function createReferenceCommand(context) {
       if (confirmed !== true) return
       await context.client.session.synthetic({
         sessionID, id: `msg_${randomUUID().replaceAll("-", "")}`,
-        text: referenceMarkdown(reference), description: `Reference: ${reference.source.title}`,
+        text: referenceMarkdown(reference, { comment }), description: `Reference: ${reference.source.title}`,
         metadata: { annotateReference: { sessionID: sourceID, capturedAt: reference.capturedAt } },
         delivery: "queue", resume: false,
       }, { signal })

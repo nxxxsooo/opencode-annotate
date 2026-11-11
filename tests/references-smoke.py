@@ -45,6 +45,7 @@ def wait(text, label):
     while time.monotonic() < deadline:
         output = tmux("capture-pane", "-p", "-t", "check:0.0")
         if text in output:
+            (root / f"{label}.txt").write_text(output)
             return output
         time.sleep(0.1)
     (root / f"{label}.txt").write_text(output)
@@ -144,7 +145,27 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     assert '"text":"agreed implementation"' in result["message"]["content"], result
 
     tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {source['id']} ")
-    wait(f"/ref {source['id']}", "command-typed")
+    wait(f"┃  /ref {source['id']}", "command-typed")
+    tmux("send-keys", "-t", "check:0.0", "Enter")
+    empty = wait("shift+enter newline", "comment-empty")
+    footer_row = lambda output: next(n for n, line in enumerate(output.splitlines()) if "enter continue" in line)
+    empty_footer = footer_row(empty)
+    multiline = "\n".join(f"SMOKE multiline {n} 中文留言" for n in range(7))
+    tmux("set-buffer", "-b", "ref-comment", multiline)
+    tmux("paste-buffer", "-p", "-b", "ref-comment", "-t", "check:0.0")
+    grown = wait("SMOKE multiline 6", "comment-grown")
+    assert footer_row(grown) > empty_footer, grown
+    assert all(f"SMOKE multiline {n}" in grown for n in range(7)), grown
+    tmux("send-keys", "-t", "check:0.0", "S-Home", "BSpace")
+    deadline = time.monotonic() + 10
+    while footer_row(tmux("capture-pane", "-p", "-t", "check:0.0")) != empty_footer:
+        if time.monotonic() > deadline:
+            raise AssertionError("Reference comment did not shrink after clearing")
+        time.sleep(0.1)
+    tmux("send-keys", "-t", "check:0.0", "-l", "SMOKE reference comment")
+    tmux("send-keys", "-t", "check:0.0", "-l", "\x1b[13;2u")
+    tmux("send-keys", "-t", "check:0.0", "-l", "SMOKE second comment line")
+    wait("SMOKE second comment line", "comment-newline")
     tmux("send-keys", "-t", "check:0.0", "Enter")
     wait("Attach conversation reference?", "confirm")
     tmux("send-keys", "-t", "check:0.0", "Enter")
@@ -153,19 +174,38 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     references = [item for item in inbox if item["type"] == "synthetic"]
     assert len(references) == 1, inbox
     assert "SMOKE agreed implementation" in references[0]["payload"]["text"], inbox
+    assert "SMOKE reference comment\nSMOKE second comment line" in references[0]["payload"]["text"], inbox
     assert "SMOKE private reasoning" not in references[0]["payload"]["text"], inbox
     assert source["id"] in references[0]["payload"]["text"], inbox
     assert references[0]["sessionID"] == target["id"], inbox
     assert api("get", f"/api/session/{target['id']}/message")["data"] == [], "Attaching must not run a model turn"
 
+    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {source['id']} ")
+    wait(f"┃  /ref {source['id']}", "long-comment-command")
+    tmux("send-keys", "-t", "check:0.0", "Enter")
+    wait("shift+enter newline", "long-comment-open")
+    long_comment = "\n".join(f"LONG {n:02d} " + "中文长留言自动换行。" * 8 for n in range(40)) + "\nDRAFT END"
+    tmux("set-buffer", "-b", "ref-comment", long_comment)
+    tmux("paste-buffer", "-p", "-b", "ref-comment", "-t", "check:0.0")
+    capped = wait("DRAFT END", "comment-capped")
+    assert "LONG 00" not in capped and "enter continue" in capped, capped
+    assert footer_row(capped) - empty_footer <= 15, capped
+    tmux("resize-window", "-t", "check:0", "-x", "60", "-y", "20")
+    narrow = wait("esc cancel", "comment-narrow")
+    assert "enter continue" in narrow and "DRAFT END" in narrow, narrow
+    tmux("send-keys", "-t", "check:0.0", "Escape")
+    wait("ctrl+p", "comment-cancelled")
+    assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
+    tmux("resize-window", "-t", "check:0", "-x", "160", "-y", "42")
+
     tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {root.name} ")
-    wait(f"/ref {root.name}", "picker-command")
+    wait(f"┃  /ref {root.name}", "picker-command")
     tmux("send-keys", "-t", "check:0.0", "Enter")
     wait("Reference a conversation", "picker")
     tmux("send-keys", "-t", "check:0.0", "Escape")
     assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
     passed = True
-    print("Passed: real server tools, pre-compaction history, >256 KiB response, pagination, message continuation, TUI /ref selection and attachment, cancellation, no model turn.")
+    print("Passed: real server tools, pre-compaction history, >256 KiB response, pagination, message continuation, /ref comment growth/shrink, multiline CJK paste, Shift+Enter, bounded scrolling, narrow/short resize, attachment and cancellation, no model turn.")
 finally:
     tmux("kill-server", check=False)
     for session_id in reversed(sessions):

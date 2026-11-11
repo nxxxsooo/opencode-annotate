@@ -1,5 +1,23 @@
 # Releasing
 
+## 0.13.0 — auto-sizing reference comments — 2026-11-11
+
+This release adds only the accepted optional `/ref` comment step and its auto-sizing
+multiline editor to the 0.12.0 baseline. Long lines wrap; the field grows and shrinks
+between three rows and a screen-aware limit (up to 18 rows), then scrolls. Shift+Enter
+adds a line, Enter continues to the existing confirmation, and Esc/Ctrl+C cancel.
+Comments remain separate from historical quotations. Captured-session targeting,
+`delivery: "queue"` and `resume: false` are unchanged.
+
+The mixed development checkout's inline reference annotations, reference-from-home,
+automatic continuation, Chrome session picker and command consolidation are excluded.
+Distribution is npm `@nxxxsooo/opencode-annotate@0.13.0` (five native executables), tag
+and GitHub Release `v0.13.0`. CI and publication retain the native/Safari build gates.
+Publishing and the maintainer's local development installation are verified separately;
+the latter stays on the checkout so unrelated unpublished work and options are preserved.
+
+Verification and release receipts are recorded privately under `.local/releases/0.13.0/`.
+
 ## 0.12.0 release baseline — 2026-11-10
 
 The user authorized one release for the accepted compact TUI toolbar and Safari companion.

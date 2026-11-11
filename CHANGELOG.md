@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.1 — README and search discoverability
+
+- Bring the install command and a three-step first review near the top of the README,
+  followed by examples for replies, documents, webpages and conversation references.
+- Show the bundled terminal reviewer and the Chrome panel as captured, including the
+  synthetic fixture pages used for the recordings.
+- Improve the npm description and keywords and the GitHub About text so searches for
+  annotation, feedback and conversation references reach the package. Metadata changes
+  take effect only with a new publication; search results remain controlled by npm,
+  GitHub and external search engines.
+- Runtime behavior is unchanged: commands, options, wire protocol and session delivery
+  remain as in 0.13.0. Native executables are rebuilt with the new version number.
+
 ## 0.13.0 — auto-sizing reference comments
 
 - Add an optional whole-reference comment to `/ref`, kept separate from quoted history.

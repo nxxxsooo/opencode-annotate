@@ -1,7 +1,7 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.13.0",
-  "description": "Unofficial OpenCode plugin: annotate replies, documents and webpages, and reference previous conversations.",
+  "version": "0.13.1",
+  "description": "Unofficial OpenCode annotation plugin: review AI replies and Markdown with a bundled terminal reviewer; annotate webpages with the browser companion.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -99,10 +99,17 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
-    "plannotator",
-    "tui",
+    "annotate",
     "annotation",
+    "tui",
+    "terminal",
     "markdown",
+    "browser-extension",
+    "chrome-extension",
+    "feedback",
+    "conversation-reference",
+    "antigravity",
+    "plannotator",
     "review"
   ],
   "publishConfig": {

@@ -22,6 +22,8 @@ export function promptReferenceComment(context: Context, options: DialogPromptOp
       const theme = context.theme
       onMount(() => input.focus())
       context.keymap.layer(() => ({
+        mode: "global",
+        target: () => input,
         commands: [{ bind: "ctrl+c", run: () => finish(undefined, true) }],
       }))
       return (

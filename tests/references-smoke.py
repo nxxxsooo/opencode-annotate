@@ -198,6 +198,18 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
     tmux("resize-window", "-t", "check:0", "-x", "160", "-y", "42")
 
+    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {source['id']} ")
+    wait(f"┃  /ref {source['id']}", "interrupt-command")
+    tmux("send-keys", "-t", "check:0.0", "Enter")
+    wait("shift+enter newline", "interrupt-comment")
+    tmux("send-keys", "-t", "check:0.0", "C-c")
+    deadline = time.monotonic() + 10
+    while "enter continue" in tmux("capture-pane", "-p", "-t", "check:0.0"):
+        if time.monotonic() > deadline:
+            raise AssertionError("Ctrl+C did not cancel the reference comment")
+        time.sleep(0.1)
+    assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
+
     tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {root.name} ")
     wait(f"┃  /ref {root.name}", "picker-command")
     tmux("send-keys", "-t", "check:0.0", "Enter")

@@ -1,5 +1,17 @@
 # Releasing
 
+## Public presentation follow-up — 2026-11-11
+
+After 0.13.1 was published and the public package verified, the user authorized
+restrained GitHub Markdown polish and creation of the missing landing at
+<https://mjshao.fun/opencode-annotate/>. The landing lives in the existing portfolio
+repository; the README remains the developer reference. Both share the verified
+product facts and authentic demo captures, with optional browser setup and Safari's
+copy-only boundary visible. This follow-up changes no runtime behavior and waits
+for the next npm release; the published 0.13.1 package remains valid.
+
+Authority: `annotate-public-presentation-20261111` in [`sources.json`](../sources.json).
+
 ## 0.13.1 — search discoverability — 2026-11-11
 
 This public-surface pass is based on the published 0.13.0 source, not the mixed

@@ -1,6 +1,19 @@
 {
   "sources": [
     {
+      "id": "annotate-public-presentation-20261111",
+      "title": "Polish GitHub Markdown and create the Annotate landing",
+      "kind": "chat-message",
+      "owner": "Mingjian",
+      "formed_at": "2026-11-11",
+      "received_at": "2026-11-11",
+      "status": "partial",
+      "local_files": ["README.md", "docs/releasing.md"],
+      "quote": "@mj-ship 可适当美化一下githubmd和landing",
+      "confirmation": "README + landing (Recommended)",
+      "note": "Approved direct implementation and shipment of compact GitHub presentation plus a lightweight landing in the existing mjshao.fun portfolio. No standalone Annotate landing previously existed. Reuse real captures and warm rust/charcoal identity; preserve published behavior, optional browser setup and Safari copy-only status. Exact session/message IDs are unavailable. Runtime/package release scope remains 0.13.1; visual-only follow-up waits for the next npm release."
+    },
+    {
       "id": "published-review-demo-captures-20261111",
       "title": "Synthetic review captures from the published 0.13.0 package",
       "kind": "product-capture",

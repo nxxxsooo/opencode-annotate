@@ -18,7 +18,8 @@ routing, native messaging and captured-session feedback delivery.
 - `npm run test:smoke` additionally needs Python 3, tmux and OpenCode; it uses an
   isolated test session and never resumes a model turn.
 - `npm run test:references` verifies server tools and `/ref` in isolated sessions,
-  also without a model turn. References are queued with `resume: false`.
+  also without a model turn. Its fixture records production delivery intent, then
+  forces `resume: false` before calling the API.
 - Drive keys or mouse only in isolated test sessions, never the user's real sessions.
   Clicking a queued message moves it into the prompt, so a following Enter starts a model
   turn; select text elsewhere and check the prompt holds only the command before Enter.

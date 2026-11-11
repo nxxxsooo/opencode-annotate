@@ -14,6 +14,7 @@ PLUGIN = Path(os.environ.get("ANNOTATE_PACKAGE_ROOT", Path(__file__).resolve().p
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
 root = Path(tempfile.mkdtemp(prefix="annotate-ref-smoke-", dir=TMP)).resolve()
+foreign_root = Path(tempfile.mkdtemp(prefix="annotate-ref-foreign-", dir=TMP)).resolve()
 socket = f"annotate-ref-smoke-{os.getpid()}"
 sessions = []
 passed = False
@@ -40,10 +41,10 @@ def tmux(*args, check=True):
                           capture_output=True, text=True, check=check, timeout=15).stdout
 
 
-def wait(text, label):
+def wait(text, label, pane="check:0.0"):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        output = tmux("capture-pane", "-p", "-t", "check:0.0")
+        output = tmux("capture-pane", "-p", "-t", pane)
         if text in output:
             (root / f"{label}.txt").write_text(output)
             return output
@@ -61,6 +62,16 @@ try:
         "title": f"Reference source {root.name}", "location": {"directory": str(root)},
     })["data"]
     sessions.append(source["id"])
+    foreign = api("post", "/api/session", {
+        "title": f"Foreign scope {root.name}", "location": {"directory": str(foreign_root)},
+    })["data"]
+    sessions.append(foreign["id"])
+    # The destination has spoken already, so an attachment continues it.
+    api("delete", f"/api/session/{target['id']}")
+    api("post", "/api/experimental/session/import", {
+        "info": target, "location": {"directory": str(root)},
+        "messages": [{"id": message_id("target"), "type": "user", "time": {"created": 1}, "text": "SMOKE destination question"}],
+    })
     # A pending prompt with resume:false is not transcript history. Import a synthetic
     # fixture conversation so the read goes through the real message API.
     api("delete", f"/api/session/{source['id']}")
@@ -111,18 +122,32 @@ export default {{ ...plugin, id: "test.annotate-ref", async setup(ctx) {{
 }} }}
 ''')
     ready = root / "tui-ready"
+    submission_path = root / "reference-input.json"
     (fixture / "tui.ts").write_text(f'''import plugin from {json.dumps((PLUGIN / "tui.ts").as_uri())}
+import {{ createReferenceCommand }} from {json.dumps((PLUGIN / "reference-command.mjs").as_uri())}
+import {{ promptReferenceComment }} from {json.dumps((PLUGIN / "reference-comment.tsx").as_uri())}
 import {{ writeFileSync }} from "node:fs"
 export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
-  return plugin.setup({{ ...ctx, options: {{ ...ctx.options, inputSource: false }},
+  const client = {{ ...ctx.client, session: {{ ...ctx.client.session, prompt(input, options) {{
+    writeFileSync({json.dumps(str(submission_path))}, JSON.stringify(input))
+    return ctx.client.session.prompt({{ ...input, resume: false }}, options)
+  }} }} }}
+  const reference = createReferenceCommand({{ ...ctx, client }}, {{
+    promptComment: (options, signal) => promptReferenceComment(ctx, options, signal),
+  }})
+  return plugin.setup({{ ...ctx, client, options: {{ ...ctx.options, inputSource: false }},
     keymap: {{ ...ctx.keymap, layer(factory) {{ return ctx.keymap.layer(() => {{
       const layer = factory()
       writeFileSync({json.dumps(str(ready))}, "ready")
-      return layer
+      return {{ ...layer, commands: [...layer.commands, {{
+        id: "test.annotate-ref.ref", title: "Reference isolated source", palette: true,
+        slash: {{ name: "ref-dev", arguments: true }}, run: reference.run,
+      }}] }}
     }}) }} }}
   }})
 }} }}
 ''')
+    # The unique alias cannot be intercepted by the maintainer's installed /ref command.
     # Loading this test location activates its server + TUI package together.
     inline = json.dumps({"plugins": ["-opencode-annotate"], "animations": False,
                          "tabs": {"mode": "off"}, "debug": {"devtools": False}})
@@ -144,8 +169,8 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     assert sum(len(m["text"]) for m in json.loads(result["older"]["content"])["messages"]) <= 24000
     assert '"text":"agreed implementation"' in result["message"]["content"], result
 
-    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {source['id']} ")
-    wait(f"┃  /ref {source['id']}", "command-typed")
+    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref-dev {source['id']} ")
+    wait(f"┃  /ref-dev {source['id']}", "command-typed")
     tmux("send-keys", "-t", "check:0.0", "Enter")
     empty = wait("shift+enter newline", "comment-empty")
     footer_row = lambda output: next(n for n, line in enumerate(output.splitlines()) if "enter continue" in line)
@@ -169,19 +194,27 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     tmux("send-keys", "-t", "check:0.0", "Enter")
     wait("Attach conversation reference?", "confirm")
     tmux("send-keys", "-t", "check:0.0", "Enter")
-    wait(f"Reference: {source['title']}", "attached")
+    wait("Continuing the conversation.", "attached")
+    submission = json.loads(submission_path.read_text())
+    assert submission["resume"] is True, submission
+    assert submission["delivery"] == "steer", submission
+    assert submission["sessionID"] == target["id"], submission
     inbox = api("get", f"/api/session/{target['id']}/inbox")["data"]
-    references = [item for item in inbox if item["type"] == "synthetic"]
+    references = [item for item in inbox if item["type"] == "user"]
     assert len(references) == 1, inbox
     assert "SMOKE agreed implementation" in references[0]["payload"]["text"], inbox
     assert "SMOKE reference comment\nSMOKE second comment line" in references[0]["payload"]["text"], inbox
     assert "SMOKE private reasoning" not in references[0]["payload"]["text"], inbox
     assert source["id"] in references[0]["payload"]["text"], inbox
     assert references[0]["sessionID"] == target["id"], inbox
-    assert api("get", f"/api/session/{target['id']}/message")["data"] == [], "Attaching must not run a model turn"
+    assert references[0]["delivery"] == "steer", inbox
+    assert not any(item["type"] == "synthetic" for item in inbox), "no synthetic items should remain in inbox"
+    assert "description" not in submission, "session.prompt must not receive a description field"
+    assert submission["text"] == references[0]["payload"]["text"], "submitted text must match inbox payload.text"
+    assert [m["id"] for m in api("get", f"/api/session/{target['id']}/message")["data"]] == [message_id("target")], "The smoke fixture must suppress model execution"
 
-    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {source['id']} ")
-    wait(f"┃  /ref {source['id']}", "long-comment-command")
+    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref-dev {source['id']} ")
+    wait(f"┃  /ref-dev {source['id']}", "long-comment-command")
     tmux("send-keys", "-t", "check:0.0", "Enter")
     wait("shift+enter newline", "long-comment-open")
     long_comment = "\n".join(f"LONG {n:02d} " + "中文长留言自动换行。" * 8 for n in range(40)) + "\nDRAFT END"
@@ -198,8 +231,8 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
     tmux("resize-window", "-t", "check:0", "-x", "160", "-y", "42")
 
-    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {source['id']} ")
-    wait(f"┃  /ref {source['id']}", "interrupt-command")
+    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref-dev {source['id']} ")
+    wait(f"┃  /ref-dev {source['id']}", "interrupt-command")
     tmux("send-keys", "-t", "check:0.0", "Enter")
     wait("shift+enter newline", "interrupt-comment")
     tmux("send-keys", "-t", "check:0.0", "C-c")
@@ -210,14 +243,50 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
         time.sleep(0.1)
     assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
 
-    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref {root.name} ")
-    wait(f"┃  /ref {root.name}", "picker-command")
+    tmux("send-keys", "-t", "check:0.0", "-l", f"/ref-dev {root.name} ")
+    wait(f"┃  /ref-dev {root.name}", "picker-command")
     tmux("send-keys", "-t", "check:0.0", "Enter")
-    wait("Reference a conversation", "picker")
+    project_picker = wait("Reference a conversation · This project", "picker")
+    assert "Foreign scope" not in project_picker
+    tmux("send-keys", "-t", "check:0.0", "C-a")
+    all_picker = wait("Reference a conversation · All projects", "all-projects")
+    assert "Foreign scope" in all_picker
+    tmux("send-keys", "-t", "check:0.0", "C-a")
+    project_picker = wait("Reference a conversation · This project", "project-again")
+    assert "Foreign scope" not in project_picker
     tmux("send-keys", "-t", "check:0.0", "Escape")
     assert api("get", f"/api/session/{target['id']}/inbox")["data"] == inbox
+    # OpenCode home has no session yet: /ref creates one, attaches without continuing,
+    # opens it, and a second /ref there adds another reference before the first message.
+    home = "check:1.0"
+    tmux("new-window", "-t", "check", "-c", str(root),
+         shlex.join(["env", f"OPENCODE_CLI_CONFIG_CONTENT={inline}", "opencode", str(root)]))
+    wait("ctrl+p", "home-ready", home)
+    for attempt in range(2):
+        tmux("send-keys", "-t", home, "-l", f"/ref-dev {source['id']} ")
+        wait(f"┃  /ref-dev {source['id']}", f"home-command-{attempt}", home)
+        tmux("send-keys", "-t", home, "Enter")
+        wait("Comment on reference (optional)", f"home-comment-{attempt}", home)
+        tmux("send-keys", "-t", home, "Enter")
+        confirm = wait("Attach conversation reference?", f"home-confirm-{attempt}", home)
+        assert "first message" in confirm, confirm
+        tmux("send-keys", "-t", home, "Enter")
+        deadline = time.monotonic() + 30
+        while json.loads(submission_path.read_text())["sessionID"] == target["id"] or attempt and len(
+                [i for i in api("get", f"/api/session/{created}/inbox")["data"] if i["type"] == "user"]) < 2:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"Home reference was not attached: {root}")
+            time.sleep(0.2)
+        submission = json.loads(submission_path.read_text())
+        assert submission["resume"] is False, submission
+        if attempt == 0:
+            created = submission["sessionID"]
+            sessions.append(created)
+            assert api("get", f"/api/session/{created}")["data"]["location"]["directory"] == str(root)
+        assert submission["sessionID"] == created, "the second /ref targets the opened new session"
+    assert api("get", f"/api/session/{created}/message")["data"] == []
     passed = True
-    print("Passed: real server tools, pre-compaction history, >256 KiB response, pagination, message continuation, /ref comment growth/shrink, multiline CJK paste, Shift+Enter, bounded scrolling, narrow/short resize, attachment and cancellation, no model turn.")
+    print("Passed: real server tools, pre-compaction history, >256 KiB response, pagination, message continuation, TUI /ref comment growth/shrink, multiline CJK paste, bounded scrolling, narrow/short resize, cancellation, selection and attachment, steer/resume intent, project/all scope toggle, /ref from home, repeated references before the first message, no model turn.")
 finally:
     tmux("kill-server", check=False)
     for session_id in reversed(sessions):
@@ -227,5 +296,6 @@ finally:
             pass
     if passed:
         shutil.rmtree(root)
+        shutil.rmtree(foreign_root)
     else:
-        print(f"Failed-run evidence: {root}")
+        print(f"Failed-run evidence: {root}, {foreign_root}")

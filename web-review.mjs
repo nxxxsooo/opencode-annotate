@@ -1,6 +1,12 @@
 import { browserTarget } from "./targets.mjs"
 import { createReceiver } from "./bridge/receiver.mjs"
 import { openInBrowser } from "./scripts/browser-target.mjs"
+// OpenCode home has no session until the first prompt; a new one inherits its location and model.
+export function homeSession(context) {
+  const location = context.location ?? context.data.location.default()
+  const selected = context.ui.model.current()
+  return { location, model: selected && { providerID: selected.providerID, id: selected.modelID, variant: selected.variant } }
+}
 export function createWebReview(context, options = {}) {
   const receivers = new Map()
   let disposed = false

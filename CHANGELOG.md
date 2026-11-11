@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0 — references as prompts
+
+- Submit the referenced conversation, optional comment and inline annotations together
+  as one ordinary user prompt, instead of a compact reference item.
+- Press **Ctrl+T** in the reference picker, or use `/ref --tui`, to mark passages in
+  the bundled reviewer. Confirmation preserves the originally selected destination.
+- Confirmed references continue an existing conversation. Before its first message,
+  references wait without starting the assistant; `/ref` also works from OpenCode home
+  and creates the destination only after confirmation.
+- Keep existing annotation/browser commands, delivery behavior and Safari's copy-only
+  boundary unchanged. This release does not include cross-agent hc review.
+
 ## 0.13.1 — README and search discoverability
 
 - Bring the install command and a three-step first review near the top of the README,

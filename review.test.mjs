@@ -49,7 +49,7 @@ test("an interrupted reply keeps its streamed text selectable", async () => {
 
 function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message, route: initialRoute, pluginOptions = {}, skills = ["what"] } = {}) {
   let route = initialRoute ?? { type: "session", sessionID: "ses_original" }
-  const sent = [], referenced = [], transitions = [], notices = [], created = [], navigations = [], skillLists = []
+  const sent = [], referenced = [], transitions = [], notices = [], created = [], navigations = [], listeners = new Map(), skillLists = []
   let confirmationCount = 0
   let pages = 0
   let gets = 0
@@ -64,7 +64,8 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       async resume() { await null; transitions.push("resume") },
       requestRender() { transitions.push("render") },
     },
-    data: { location: { default: () => ({ directory: sessionDir }) }, session: {
+    data: { location: { default: () => ({ directory: sessionDir }) },
+      on(name, listener) { listeners.set(name, listener); return () => listeners.delete(name) }, session: {
       get: () => ({ title: "Original session" }),
       status: id => (assert.equal(id, "ses_original"), status),
       message: {
@@ -145,6 +146,7 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
     confirmations: () => confirmationCount, pages: () => pages, gets: () => gets,
     setStatus: value => { status = value },
     setRoute: value => { route = value },
+    emit: (name, data) => listeners.get(name)?.({ data }),
   }
 }
 
@@ -258,12 +260,17 @@ test("/ref TUI sends combined feedback once to the captured session, or cancels 
   }
 })
 
-test("annotations sent to a busy session wait in the queue", async t => {
-  const h = await harness(t, { status: "running" })
-  await h.command.run()
-  assert.equal(h.sent.length, 1)
-  assert.equal(h.sent[0].delivery, "queue")
-  assert.equal(h.sent[0].resume, true)
+test("confirmed annotations continue without relying on cached session status", async t => {
+  for (const status of ["running", "idle", undefined]) {
+    const h = await harness(t, { changeRoute: true })
+    h.setStatus(status)
+    if (status === undefined) delete h.ctx.data.session.status
+    await h.command.run()
+    assert.equal(h.sent.length, 1)
+    assert.equal(h.sent[0].sessionID, "ses_original")
+    assert.equal(h.sent[0].delivery, "steer")
+    assert.equal(h.sent[0].resume, true)
+  }
 })
 
 test("automatic review opens the exact completed reply and preserves confirmed delivery", async t => {
@@ -477,11 +484,13 @@ test("numbered replies are retired in favor of the picker", async t => {
   assert.ok(h.notices.some(n => n.variant === "error" && /annotate-pick/.test(n.message)))
 })
 
-test("webpages route to /annotate-web instead of /annotate", async t => {
-  const h = await harness(t)
+test("/annotate opens explicit webpages without starting a text review", async t => {
+  const h = await browserHarness(t)
   await h.command.run("https://example.com")
   assert.deepEqual(h.transitions, [])
-  assert.ok(h.notices.some(n => n.variant === "error" && /annotate-web/.test(n.message)))
+  assert.deepEqual(h.opened, ["https://example.com/"])
+  assert.deepEqual(h.sent, [])
+  assert.equal(h.pages(), 0)
 })
 
 async function browserHarness(t, options = {}) {
@@ -492,15 +501,77 @@ async function browserHarness(t, options = {}) {
   t.after(() => rm(root, { recursive: true, force: true }))
   const opened = []
   const h = await harness(t, {
-    ...options, web: { receiver: { root }, open: async url => { opened.push(url) } },
+    sessionDir: root, ...options, web: { autoRegister: true, receiver: { root }, open: async url => {
+      const target = (await listTargets(root)).find(target => target.sessionID)
+      assert.ok(target, "register the receiver before opening Chrome")
+      assert.equal((await request(target.socket, { action: "info", targetID: target.id })).ok, true)
+      opened.push(url)
+    } },
   })
-  return { ...h, opened, targets: () => listTargets(root) }
+  return { ...h, opened, targets: async () => (await listTargets(root)).filter(target => target.sessionID),
+    workspaces: async () => (await listTargets(root)).filter(target => target.kind === "workspace") }
 }
 
-test("web review from home creates an empty session and pins later feedback to it", async t => {
+function browserBatch(target) {
+  return {
+    action: "send", targetID: target.id, batchID: randomUUID(),
+    review: { version: 2, annotations: [{ page: { url: "https://example.test/", title: "First review" },
+      id: "first-note", revision: 1, kind: "comment", comment: "Start with this page", createdAt: new Date().toISOString(),
+      anchor: { type: "text", quote: "Alpha", selector: "#alpha" },
+    }] },
+  }
+}
+
+test("the current session registers for browser review without a pairing command", async t => {
+  const h = await browserHarness(t)
+  await h.command.webReady()
+  const [target] = await h.targets()
+  assert.equal(target.sessionID, "ses_original")
+  assert.equal(target.title, "Original session")
+  assert.equal(h.sent.length, 0, "automatic discovery must not start a model turn")
+  assert.equal(h.pages(), 0, "automatic discovery must not read assistant history")
+  const receipt = await request(target.socket, browserBatch(target))
+  assert.equal(receipt.state, "admitted", JSON.stringify(receipt))
+  assert.equal(h.sent[0].sessionID, "ses_original")
+  assert.equal((await request(target.socket, { action: "disconnect", targetID: target.id })).target.connected, false)
+  h.emit("session.execution.started", { sessionID: "ses_original" })
+  await h.command.webReady()
+  await h.command.run("https://example.test/page")
+  assert.equal((await request(target.socket, browserBatch(target))).ok, false, "automatic events must not reconnect a disconnected session")
+  assert.equal((await request(target.socket, { action: "connect", targetID: target.id })).target.connected, true)
+  assert.equal((await request(target.socket, browserBatch(target))).state, "admitted")
+})
+
+test("a newly active session registers without reopening the browser panel", async t => {
+  const h = await browserHarness(t, { route: { type: "home" } })
+  h.ctx.client.session.get = async ({ sessionID }) => ({ id: sessionID, title: "Started session", location: { directory: "/started" } })
+  h.emit("session.execution.started", { sessionID: "ses_started" })
+  await h.command.webReady()
+  assert.deepEqual(await h.targets(), [], "service-wide events must not expose a background session")
+  h.setRoute({ type: "session", sessionID: "ses_started" })
+  h.emit("session.execution.started", { sessionID: "ses_started" })
+  await h.command.webReady()
+  const [target] = await h.targets()
+  assert.equal(target.sessionID, "ses_started")
+  assert.equal(target.title, "Started session")
+  assert.deepEqual(h.sent, [])
+})
+
+test("the extension creates an empty session from home and pins later feedback to it", async t => {
   const h = await browserHarness(t, { route: { type: "home" } })
   h.ctx.location = { directory: h.root }
-  await h.command.web()
+  await h.command.webReady()
+  assert.deepEqual(h.created, [], "discovering a workspace must not create a session")
+  const [workspace] = await h.workspaces()
+  const info = await request(workspace.socket, { action: "info", targetID: workspace.id })
+  assert.equal(info.target.directory, h.root)
+  assert.equal(info.target.kind, "workspace")
+  assert.equal(info.target.canCreate, true)
+  assert.equal((await request(workspace.socket, browserBatch(workspace))).ok, false, "a workspace is not a feedback destination")
+  const creation = { action: "create-session", targetID: workspace.id, requestID: randomUUID() }
+  const [first, retry] = await Promise.all([request(workspace.socket, creation), request(workspace.socket, creation)])
+  assert.equal(first.ok, true, JSON.stringify(first))
+  assert.deepEqual(retry, first)
   assert.deepEqual(h.created, [{
     location: { directory: h.root }, model: { providerID: "fixture", id: "fixture", variant: "high" },
   }])
@@ -511,27 +582,46 @@ test("web review from home creates an empty session and pins later feedback to i
   assert.deepEqual(h.sent, [], "pairing must not send a prompt")
   assert.equal(h.pages(), 0, "web review must not read assistant history")
   assert.deepEqual(h.transitions, [])
-  assert.ok(h.notices.some(n => /Ready for browser pairing/.test(n.message)))
-
-  await h.command.web()
-  assert.equal(h.created.length, 1, "re-pairing reuses the empty session")
+  assert.equal(first.target.sessionID, "ses_original")
+  assert.equal(h.created.length, 1, "concurrent and repeated requests create only one session")
+  assert.deepEqual(await request(workspace.socket, creation), first)
+  assert.equal((await request(workspace.socket, { action: "info", targetID: workspace.id })).target, null, "a home workspace hides after navigation")
   assert.equal((await h.targets()).length, 1)
   h.setRoute({ type: "session", sessionID: "ses_other" })
-  const receipt = await request(target.socket, {
-    action: "send", targetID: target.id, batchID: randomUUID(),
-    review: { version: 1, page: { url: "https://example.test/", title: "First review" }, annotations: [{
-      id: "first-note", revision: 1, kind: "comment", comment: "Start with this page", createdAt: new Date().toISOString(),
-      anchor: { type: "text", quote: "Alpha", selector: "#alpha" },
-    }] },
-  })
+  const receipt = await request(target.socket, browserBatch(target))
   assert.equal(receipt.state, "admitted", JSON.stringify(receipt))
   assert.equal(h.sent.length, 1)
   assert.equal(h.sent[0].sessionID, "ses_original")
+  assert.equal(h.sent[0].delivery, "steer", "the first browser feedback starts the empty session directly")
+  assert.equal(h.sent[0].resume, true)
   assert.match(h.sent[0].text, /Start with this page/)
 
   h.setRoute({ type: "session", sessionID: "ses_original" })
-  await h.command.web("off")
-  assert.deepEqual(await h.targets(), [])
+  await request(target.socket, { action: "disconnect", targetID: target.id })
+  assert.equal((await request(target.socket, browserBatch(target))).ok, false)
+})
+
+test("browser sends continue the captured session regardless of cached status, with idempotent retries", async t => {
+  const h = await browserHarness(t)
+  await h.command.webReady()
+  const [target] = await h.targets()
+  h.setRoute({ type: "session", sessionID: "ses_other" })
+  for (const status of ["running", "idle", "retry", undefined, "idle"]) {
+    h.setStatus(status)
+    const batch = browserBatch(target)
+    const receipt = await request(target.socket, batch)
+    assert.equal(receipt.state, "admitted", JSON.stringify(receipt))
+    assert.equal(h.sent.at(-1).sessionID, "ses_original")
+    assert.equal(h.sent.at(-1).delivery, "steer")
+    assert.equal(h.sent.at(-1).resume, true)
+    h.setStatus(status === "idle" ? "running" : "idle")
+    const count = h.sent.length
+    assert.deepEqual(await request(target.socket, batch), receipt)
+    assert.equal(h.sent.length, count, "a status change must not re-admit a retry")
+  }
+  delete h.ctx.data.session.status
+  assert.equal((await request(target.socket, browserBatch(target))).state, "admitted")
+  assert.equal(h.sent.at(-1).delivery, "steer", "an unavailable status API must not defer confirmed feedback")
 })
 
 test("home webpage targets use the default location when no explicit location is set", async t => {
@@ -540,7 +630,7 @@ test("home webpage targets use the default location when no explicit location is
     await writeFile(path.join(sessionDir, "中文 page.html"), "<h1>Page</h1>")
     const h = await browserHarness(t, { route: { type: "home" }, sessionDir })
     h.ctx.location = undefined
-    await h.command.web(input)
+    await h.command.run(input)
     assert.equal(h.created.length, 1)
     assert.deepEqual(h.created[0].location, { directory: sessionDir })
     assert.equal((await h.targets())[0].directory, sessionDir)
@@ -564,9 +654,9 @@ test("an in-flight home pairing captures its location and model without stealing
     await ready
     return session
   }
-  const pairing = h.command.web()
+  const pairing = h.command.run("https://example.test/page")
   await creating
-  await h.command.web()
+  await h.command.run("https://example.test/page")
   h.ctx.location = { directory: "/another-project" }
   h.ctx.ui.model.current = () => ({ providerID: "other", modelID: "other" })
   h.setRoute({ type: "session", sessionID: "ses_other" })
@@ -581,11 +671,11 @@ test("an in-flight home pairing captures its location and model without stealing
   assert.deepEqual(h.sent, [])
 })
 
-test("invalid targets, revocation and text commands do not create a session from home", async t => {
+test("invalid targets and text commands do not create a session from home", async t => {
   for (const input of ["off", "web off", "notes.md", "javascript:alert(1)", "missing.html"]) {
     const h = await browserHarness(t, { route: { type: "home" } })
     h.ctx.location = { directory: h.root }
-    await h.command.web(input)
+    await h.command.run(input)
     await h.command.run()
     await h.command.pick()
     await h.command.selection()
@@ -602,12 +692,12 @@ test("session creation failure leaves pairing retryable", async t => {
   const h = await browserHarness(t, { route: { type: "home" } })
   const create = h.ctx.client.session.create
   h.ctx.client.session.create = async () => { throw new Error("Session creation failed") }
-  await h.command.web()
+  await h.command.run("https://example.test/page")
   assert.ok(h.notices.some(n => n.variant === "error" && /Session creation failed/.test(n.message)))
   assert.deepEqual(await h.targets(), [])
   assert.deepEqual(h.navigations, [])
   h.ctx.client.session.create = create
-  await h.command.web()
+  await h.command.run("https://example.test/page")
   assert.equal((await h.targets()).length, 1)
 })
 
@@ -623,7 +713,7 @@ test("disposing during session creation never registers or focuses the new sessi
     await ready
     return session
   }
-  const pairing = h.command.web()
+  const pairing = h.command.run("https://example.test/page")
   await creating
   await h.command.dispose()
   release()

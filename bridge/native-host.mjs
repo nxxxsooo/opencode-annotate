@@ -16,12 +16,15 @@ decodeStream(process.stdin, async message => {
     const targets = await listTargets(config.targetsDirectory)
     if (message.action === "targets") {
       const live = await Promise.all(targets.map(async target => {
-        try { return (await request(target.socket, { action: "info", targetID: target.id })).target } catch { return null }
+        try {
+          const result = await request(target.socket, { action: "info", targetID: target.id })
+          return result.ok && result.target ? result.target : null
+        } catch { return null }
       }))
       response = { ok: true, targets: live.filter(Boolean) }
     } else {
       const target = targets.find(target => target.id === message.targetID)
-      if (!target) throw new Error("Paired session is offline; run /annotate-web in it to reconnect")
+      if (!target) throw new Error("Paired session is offline; reopen it in OpenCode or AGY to reconnect")
       response = await request(target.socket, message)
     }
   } catch (error) { response = { ok: false, error: error.message } }

@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 import { createWebReview } from "./web-review.mjs"
+import { feedbackInput } from "./delivery.mjs"
 import { wantsBrowser } from "./targets.mjs"
 import { prepareTheme } from "./theme.mjs"
 import { createInputSource } from "./input-source.mjs"
@@ -306,16 +307,7 @@ export function createReviewCommand(context, options = {}) {
         return notice(`Sending cancelled.${retainedArchive}`)
       }
       if (submission) await submission.deliver({ sessionID, id: promptID, text })
-      else {
-        // An idle session starts queued input at once, but OpenCode's prompt can still list it
-        // as queued; an empty Enter then tries to steer it and fails with a 409. Steering an
-        // idle session is equivalent and never listed as queued. A busy turn keeps the queue.
-        const busy = (context.data.session.status?.(sessionID) ?? "running") !== "idle"
-        await context.client.session.prompt({
-          sessionID, id: promptID, text, delivery: busy ? "queue" : "steer", resume: true,
-          ...(skills.length ? { skills } : {}),
-        })
-      }
+      else await context.client.session.prompt(feedbackInput({ sessionID, id: promptID, text, ...(skills.length ? { skills } : {}) }))
       keepDraft = archived > 0
       const delivered = submission?.success?.(count) ?? `Sent ${count} ${count === 1 ? "annotation" : "annotations"}.`
       notice(`${delivered}${retainedArchive}`, "success")
@@ -337,15 +329,17 @@ export function createReviewCommand(context, options = {}) {
     }
   }
 
-  const run = (input = "") => start(async ({ sessionID, signal }) => {
-    const target = input.trim()
-    if (/^\d+$/.test(target)) throw new Error("Numbered replies are retired. Use /annotate-pick to choose earlier text.")
-    if (wantsBrowser(target)) throw new Error("Use /annotate-web for webpages and browser pairing.")
-    if (target) return documentSource(target, context.client, sessionID, signal)
-    const reply = await latestReply(context.client, sessionID, signal)
-    if (!reply) notice("This session has no completed assistant reply yet.")
-    return reply
-  })
+  const run = (input = "") => {
+    const target = input.trim(), browser = wantsBrowser(target)
+    return start(async ({ sessionID, signal }) => {
+      if (/^\d+$/.test(target)) throw new Error("Numbered replies are retired. Use /annotate-pick to choose earlier text.")
+      if (browser) { await web.run(target, sessionID, signal); return }
+      if (target) return documentSource(target, context.client, sessionID, signal)
+      const reply = await latestReply(context.client, sessionID, signal)
+      if (!reply) notice("This session has no completed assistant reply yet.")
+      return reply
+    }, { home: browser })
+  }
 
   const auto = (sessionID, messageID, threshold, current = () => true) => start(async ({ signal }) => {
     const message = await context.client.session.message.get({ sessionID, messageID }, { signal, headers: uncompressed })
@@ -386,20 +380,10 @@ export function createReviewCommand(context, options = {}) {
     return texts.find(text => compact(text.text).includes(needle)) ?? { text: selected, selection: true }
   })
 
-  const webReview = (input = "") => {
-    const value = input.trim()
-    const target = value === "" ? "web" : value === "off" ? "web off" : value
-    return start(async ({ sessionID, signal }) => {
-      if (!(await web.run(target, sessionID, signal))) {
-        throw new Error("Use a webpage URL, an HTML file, or off.")
-      }
-    }, { home: target !== "web off" })
-  }
-
   const snapshot = (sessionID, source, submission) => start(async () => source, { sessionID, submission })
 
   return {
-    run, auto, pick, snapshot, selection: annotateSelection, web: webReview,
+    run, auto, pick, snapshot, selection: annotateSelection, webReady: web.ready,
     dispose() {
       context.renderer.off("selection", remember)
       disposed = true

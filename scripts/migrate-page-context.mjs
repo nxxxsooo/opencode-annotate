@@ -1,21 +1,21 @@
 import { createHash } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
-import { safeUrl, validateReview } from "../browser/protocol.mjs"
+import { pageTitle, safeUrl, validateReview } from "../browser/protocol.mjs"
 
 export function migratePageContext(storage) {
   const result = {}
   for (const [key, page] of Object.entries(storage)) {
     if (!key.startsWith("page:")) continue
     if (!page?.page?.url || !Array.isArray(page.notes)) throw new Error(`Unrecognized old draft: ${key}`)
-    const source = { url: safeUrl(page.page.url), title: page.page.title || "Page" }
+    const source = { url: safeUrl(page.page.url), title: pageTitle(page.page.title || "Page") }
     const hash = createHash("sha256").update(source.url).digest("hex")
     for (const old of page.notes) {
       const note = { id: old.id, revision: 1, kind: old.kind, comment: old.body,
         createdAt: old.createdAt, updatedAt: old.updatedAt || old.createdAt,
         anchor: { ...old.target, element: old.target.label || old.target.role || old.target.type,
           styles: old.target.styles || "", accessibility: old.target.accessibility || "", fullPath: old.target.selector }, page: source }
-      validateReview({ version: 1, page: source, annotations: [note] })
+      validateReview({ version: 2, annotations: [note] })
       const destination = `note:${hash}:${note.id}`
       if (result[destination]) throw new Error("Duplicate note during migration")
       result[destination] = note

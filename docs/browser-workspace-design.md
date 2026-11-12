@@ -1,6 +1,27 @@
 # Compact browser annotation workspace
 
+## Global rounds — 2026-11-12
+
+One working round now accumulates undeleted, undelivered notes across all pages. The
+compact queue groups pages by their first note, labels the active group “This page”,
+and numbers notes sequentially in page-group display order in both queue and page markers.
+Pages follow their earliest note; notes within each page follow creation time then ID. Only
+the active page's anchors are resolved; other-page notes are “elsewhere”, not broken.
+Show on page reuses an exact-URL tab (current window first), otherwise navigates the
+active tab and reveals after loading. Edit first opens the note's page; Delete/Undo
+remain available from any page. Drafts and draft-conflict handling stay page-local.
+
+Send/Copy close one global round and deliver per-page Markdown sections in one message.
+The outbox, 200-note/512 KiB bounds, latest-round recovery, and ten-round retention
+are global. Protocol 6 uses only review envelope v2: each annotation carries its own
+validated page; there is no top-level page or v1 compatibility path. This supersedes
+the URL-isolated queues and per-page round retention described in historical sections below.
+
 Status: implemented and locally verified on 2026-10-21. The user approved the preview and Build Contract with “Approve and implement” and subsequently confirmed the preview looked good. The everyday Chrome extension was reloaded on 2026-10-22, with running-worker parity and saved-data preservation verified below. Publication and post-reload interaction verification remain separate delivery boundaries.
+
+The global-round and extension-session-controls enhancements are included in the
+0.15.0 candidate; current verification and publication state is in
+[releasing.md](releasing.md#0150-candidate--browser-rounds-and-automatic-connection--2026-11-12).
 
 ## Saved working state — 2026-10-22
 
@@ -36,6 +57,7 @@ One bounded Chrome sidebar and its page highlighting, using the current HTML/CSS
 3. A selection reveals a composer with the selected quote, Comment/Question choice, labeled feedback input, local draft state, Add note/Save changes, and Discard draft. Cmd/Ctrl+Enter performs the labeled local save action.
 4. Added notes collapse the composer into a numbered queue. Numbers match page markers. Each note separates quote, feedback, and pending/sent state; editing, deletion, and Show on page are accessible controls.
 5. A persistent delivery region shows the destination, a meaningful pending count, and Send & continue. All-sent, disconnected, sending, and failure states explain the next action. It occupies layout space; content and focused controls never scroll behind it.
+6. The destination menu also offers New session and Disconnect. Creating an OpenCode session inherits the selected destination's project/model; a blank home exposes a creation-only workspace with its current model. Creation and connection never send notes. These controls reuse the existing typography, buttons and popover.
 
 ## Direction contract
 
@@ -86,6 +108,14 @@ Keep the destination visible near Send. Use explicit labels for pending count, a
 
 Connection selection and refresh remain discoverable; long/duplicate titles expose directory context in the chooser. Errors appear near the affected composer, target, or delivery action, with a live announcement.
 
+Explicit disconnect keeps the destination discoverable while blocking delivery, preserves
+notes/drafts/outboxes, and survives panel reload. Selecting a session reconnects it; retry
+batches migrate to a replacement receiver only for the same provider/session. New-session
+requests retain a request ID for lost-response retries within the receiver lifetime.
+The panel locks destination controls during menu refresh and ignores stale connection
+responses after a user change. Panel/worker protocol 6 carries workspace discovery,
+creation/disconnection actions and global rounds.
+
 ## Accessibility and motion
 
 - Native semantic controls with labels, note-specific action names, logical focus order, Escape dismissal, and visible focus that is never obscured.
@@ -115,6 +145,9 @@ Preview verification is recorded in that directory's `review/checks.md`, with te
 10. Restored sent reviews display all-sent state; editing one sent note sends only that revision.
 11. Multiple sessions require a choice; disconnected/failed sending preserves notes and original destination/batch for retry.
 12. Copy/export, privacy filtering, URL isolation, duplicate-send prevention, and existing bridge/TUI behavior remain verified.
+13. A blank-home workspace creates an empty session with the chosen location/model; failures preserve feedback and a lost-response retry does not duplicate creation within the receiver lifetime.
+14. New session from an existing destination inherits that destination's location/model, preserves local feedback, and never takes focus from a different terminal tab.
+15. Disconnect rejects sending across panel reload; explicit reconnect after a receiver restart preserves the original session's pending batch without sending it automatically.
 
 ## Implementation slices
 
@@ -145,10 +178,12 @@ The everyday Chrome profile, native side-panel-shell presentation, and a screen-
 Accepted by the user in the everyday Chrome profile (“works”) after three fixes. Criterion 10 and the pending/sent queue above no longer describe current behavior:
 
 - Delivery closes a round: delivered notes leave the working list, keep their `sentRound`/`sentAt`/`sentVia`, and stay restorable through **Restore last round** (ten rounds per page). Editing a delivered note now requires restoring its round.
-- Two explicit delivery modes: a **Live** session gets **Send N notes**; otherwise **Copy N notes** copies the round for any agent and closes it. A send that loses its session keeps the notes and switches to Copy.
+- Two stable delivery actions: **Send N notes** always attempts session delivery; **Copy instead** separately copies the round for any agent and closes it. Offline Send refreshes the connection and preserves notes if the destination remains unavailable.
 - The worker reinjects page tools after a reload while `activeTab` still applies; a `PROTOCOL` mismatch between panel and worker shows **Reload Annotate** instead of raw action errors.
 
-Current behavior lives in the README and CHANGELOG (Unreleased → Browser review rounds); `npm run test:browser` covered 34 scenarios at acceptance. Not yet committed or released at the time of this note.
+Current behavior lives in the README and CHANGELOG (0.15.0); `npm run test:browser`
+covered 34 scenarios at that earlier acceptance. The original note predates publication;
+the candidate's current verification state is recorded in releasing.md.
 
 ## Residual risks
 

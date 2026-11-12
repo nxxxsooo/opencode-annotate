@@ -6,6 +6,7 @@ import path from "node:path"
 import assert from "node:assert/strict"
 import { installBridge } from "../scripts/install-bridge.mjs"
 import { createReceiver } from "../bridge/receiver.mjs"
+import { createWebReview } from "../web-review.mjs"
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || pathToFileURL(path.join(os.homedir(), ".agents/node_modules/playwright-core/index.mjs")).href)
 
@@ -21,9 +22,7 @@ const targetsDirectory = path.join(temp, "targets")
 const installation = await installBridge({ profileDirectory: path.join(temp, "chrome"), installRoot: path.join(temp, "host"), targetsDirectory })
 const sent = []
 let failNextDelivery = false
-const receiver = await createReceiver({ root: targetsDirectory, sessionID: "ses_browser_test", title: "Browser test target", directory: "/isolated-test", resume: false,
-  client: { session: { get: async () => ({}), prompt: async input => { if (failNextDelivery) { failNextDelivery = false; throw new Error("Temporary delivery failure (test)") } sent.push(input); return { id: input.id } } } } })
-let context, panel
+let context, panel, receiver
 const additionalReceivers = []
 const passed = []
 try {
@@ -59,7 +58,50 @@ try {
   panel = await panelEvent
   const errors = []; panel.on("pageerror", e => errors.push(e.message))
   await panel.locator("#page-title").filter({ hasText: "Annotate review fixture" }).waitFor()
+  await panel.locator("#paired").filter({ hasText: /^No session$/ }).waitFor()
+  await panel.evaluate(() => {
+    // This test panel is a background tab; model a visible side panel's lifecycle.
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" })
+    document.dispatchEvent(new Event("visibilitychange"))
+  })
+  await panel.getByRole("button", { name: "Pick element", exact: true }).click()
+  await page.locator("#public").click()
+  await panel.locator("#quote").filter({ hasText: "Public text" }).waitFor()
+  await panel.getByLabel("Your feedback").fill("Keep my draft while the session starts.")
+  await panel.locator("#draft-state").filter({ hasText: "Draft saved locally" }).waitFor()
+  receiver = await createReceiver({ root: targetsDirectory, sessionID: "ses_browser_test", title: "Browser test target", directory: "/isolated-test", resume: false,
+    client: { session: { get: async () => ({}), prompt: async input => { if (failNextDelivery) { failNextDelivery = false; throw new Error("Temporary delivery failure (test)") } sent.push(input); return { id: input.id } } } } })
+  await panel.locator("#link-state").filter({ hasText: "Live" }).waitFor({ timeout: 5000 })
+  assert.equal(await panel.locator("#paired").textContent(), "Browser test target")
+  assert.equal(await panel.getByLabel("Your feedback").inputValue(), "Keep my draft while the session starts.")
+  assert.equal(sent.length, 0)
+  await panel.getByRole("button", { name: "Discard draft", exact: true }).click()
+  passed.push("A panel opened first discovers a new session promptly without reloading, losing its draft or sending")
+
+  await panel.evaluate(() => {
+    const send = chrome.runtime.sendMessage.bind(chrome.runtime)
+    window.connectionCalls = 0
+    chrome.runtime.sendMessage = message => {
+      if (message.action !== "connection") return send(message)
+      window.connectionCalls++
+      return new Promise((resolve, reject) => {
+        window.releaseConnection = () => {
+          chrome.runtime.sendMessage = send
+          return send(message).then(resolve, reject)
+        }
+      })
+    }
+    window.dispatchEvent(new Event("focus"))
+    document.getElementById("change-target").click()
+  })
+  assert.equal(await panel.evaluate(() => window.connectionCalls), 1)
+  assert.equal(await panel.locator("#change-target").isDisabled(), true, "opening the destination popover must wait for the in-flight probe")
+  await panel.evaluate(() => window.releaseConnection())
+  await panel.locator("#change-target:enabled").waitFor({ state: "attached" })
+  passed.push("Overlapping automatic and manual refreshes await one connection probe")
+  await panel.reload()
   await panel.locator("#paired").filter({ hasText: "Browser test target" }).waitFor()
+  await panel.locator("#page-title").filter({ hasText: "Annotate review fixture" }).waitFor()
   await panel.setViewportSize({ width: 320, height: 720 })
   if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-empty.png") })
   assert.equal(await panel.getByRole("button", { name: "Pair selected session", exact: true }).count(), 0)
@@ -261,26 +303,29 @@ try {
   const exported = JSON.parse(await readFile(await (await downloadPromise).path(), "utf8"))
   assert.equal(exported.annotations.length, 3)
   assert.ok(exported.annotations[0].anchor.styles)
-  assert.equal(exported.page.url, url)
-  assert.equal(exported.page.title, "Annotate review fixture")
+  assert.equal(exported.version, 2)
+  assert.equal(exported.annotations[0].page.url, url)
+  assert.equal(exported.annotations[0].page.title, "Annotate review fixture")
   await panel.getByRole("button", { name: "More review options", exact: true }).click()
   passed.push("Complete JSON export includes styles/URL and excludes adjacent editors")
   await panel.locator("#panel-body").evaluate(node => { node.scrollTop = 0 })
   if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-notes.png") })
 
   await page.reload(); await activate(); await page.waitForSelector("[data-opencode-annotate]", { state: "attached" })
-  await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 3)
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 3)
   await page.evaluate(() => history.pushState({}, "", "/other"))
-  await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 0)
+  await panel.locator("#page-url").filter({ hasText: "/other" }).waitFor()
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 3)
   await page.evaluate(() => history.back())
-  await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 3)
-  passed.push("Reload restores drafts; SPA routes isolate and restore notes")
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 3)
+  passed.push("Reload restores drafts; SPA routes retain the global round")
 
   await panel.getByRole("button", { name: "Send 3 notes", exact: true }).click()
   assert.equal(await panel.locator("#link-state").textContent(), "Live")
   assert.equal(await panel.locator("#copy-round").isVisible(), true)
   await panel.getByRole("status").filter({ hasText: "Sent 3 notes to Browser test target" }).waitFor()
   assert.equal(sent.length, 1); assert.equal(sent[0].sessionID, "ses_browser_test"); assert.equal(sent[0].resume, false)
+  assert.equal(sent[0].delivery, "steer")
   assert.ok(sent[0].text.includes("Explain the second occurrence"))
   await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 0)
   await panel.locator("#empty-title").filter({ hasText: "Ready for the next round." }).waitFor()
@@ -323,22 +368,45 @@ try {
   const other = await createReceiver({ root: targetsDirectory, sessionID: "ses_other", title: "Other session", directory: "/other-test", resume: false,
     client: { session: { get: async () => ({}), prompt: async () => { throw new Error("Must not send to the other session") } } } })
   additionalReceivers.push(other)
-  await panel.evaluate(() => chrome.runtime.sendMessage({ action: "unpair" }))
-  await panel.getByLabel("Choose session").waitFor()
+  await panel.evaluate(() => chrome.storage.local.remove(["paired", "disconnected"]))
+  await panel.getByLabel("Destination session", { exact: true }).waitFor()
   await panel.locator("#paired").filter({ hasText: "Choose a session" }).waitFor()
-  assert.equal(await panel.getByRole("button", { name: "Copy 1 note", exact: true }).isEnabled(), true)
-  assert.ok((await panel.locator("#status").textContent()).includes("Choose a session above to send"))
+  if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-destination.png") })
+  assert.equal(await panel.getByRole("button", { name: "Send 1 note", exact: true }).isEnabled(), true)
+  assert.equal(await panel.locator("#copy-round").isVisible(), true)
+  assert.ok((await panel.locator("#status").textContent()).includes("Choose the session"))
   await pick("#unicode")
   await panel.getByLabel("Your feedback").fill("Keep typing while sessions refresh.")
-  await panel.evaluate(() => { document.getElementById("refresh-targets").click(); document.getElementById("comment").focus() })
-  await panel.locator("#refresh-targets:enabled").waitFor()
+  await panel.evaluate(() => { window.dispatchEvent(new Event("focus")); document.getElementById("comment").focus() })
+  await panel.waitForTimeout(100)
   assert.equal(await panel.evaluate(() => document.activeElement.id), "comment")
   await panel.getByRole("button", { name: "Discard draft", exact: true }).click()
-  await panel.getByLabel("Choose session").selectOption(receiver.target.id)
+  const now = Date.now()
+  // An old session with fresh activity must lead; registration-time titles must be replaced by live ones.
+  const extras = await Promise.all(Array.from({ length: 6 }, (_, index) => createReceiver({ root: targetsDirectory, sessionID: `ses_extra_${index}`,
+    title: `ses_extra_${index}`, directory: `/extra-${index}`, resume: false,
+    client: { session: { get: async () => ({ title: `Old project ${index}`, time: { created: now - (index + 10) * 86400000,
+      updated: index ? now - index * 3600000 : Date.now() } }), prompt: async () => { throw new Error("Must not send to an extra session") } } } })))
+  const rows = panel.locator("#targets .session-row")
+  await rows.first().locator(".session-title").filter({ hasText: "Old project 0" }).waitFor()
+  assert.equal(await rows.count(), 6)
+  if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-session-picker.png") })
+  assert.equal(await panel.locator("#show-all-sessions").textContent(), "Show all 8")
+  assert.equal(await panel.locator("#targets").getByText(/^ses_extra/).count(), 0)
+  await panel.locator("#show-all-sessions").click()
+  assert.equal(await rows.count(), 8)
+  await panel.getByLabel("Sort sessions").selectOption("title")
+  assert.equal(await rows.first().locator(".session-title").textContent(), "Browser test target")
+  await panel.getByLabel("Sort sessions").selectOption("updated")
+  await panel.getByLabel("Filter sessions").fill("browser test")
+  assert.equal(await rows.count(), 1)
+  await panel.getByLabel("Filter sessions").press("Enter")
   await panel.locator("#paired").filter({ hasText: "Browser test target" }).waitFor()
   assert.equal(await panel.locator("#session-options").isVisible(), false)
+  await Promise.all(extras.map(extra => extra.close()))
   assert.equal(sent.length, 1)
   passed.push("Multiple sessions require one choice and connection refresh never steals typing focus")
+  passed.push("The session picker leads with recent activity, shows live titles, and filters with Enter to choose")
 
   await panel.getByRole("button", { name: "Edit note 1", exact: true }).click()
   await panel.getByLabel("Your feedback").fill("Revised question after sending.")
@@ -355,11 +423,13 @@ try {
       const body = document.getElementById("panel-body"), footer = document.querySelector("footer"), focused = document.activeElement
       const rect = focused.getBoundingClientRect(), hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
       return { id: focused.id, visible: focused === hit || focused.contains(hit), width: body.clientWidth, scrollWidth: body.scrollWidth,
+        footerWidth: footer.clientWidth, footerScrollWidth: footer.scrollWidth,
         bottom: rect.bottom, footerTop: footer.getBoundingClientRect().top, mainBottom: body.getBoundingClientRect().bottom }
     })
     assert.equal(layout.id, "save")
     assert.equal(layout.visible, true)
     assert.equal(layout.width, layout.scrollWidth)
+    assert.equal(layout.footerWidth, layout.footerScrollWidth)
     assert.equal(layout.mainBottom, layout.footerTop)
     assert.ok(layout.bottom < layout.footerTop)
     if (viewport.width === 210 && !process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-zoom.png") })
@@ -388,6 +458,27 @@ try {
   failNextDelivery = true
   await panel.getByRole("button", { name: "Send 1 note", exact: true }).click()
   await panel.getByRole("status").filter({ hasText: "Temporary delivery failure" }).waitFor()
+  const previousTargetID = receiver.target.id
+  await receiver.close()
+  receiver = await createReceiver({ root: targetsDirectory, sessionID: "ses_browser_test", title: "Browser test target", directory: "/isolated-test", resume: false,
+    client: { session: { get: async () => ({}), prompt: async input => { sent.push(input); return { id: input.id } } } } })
+  const discoveredReplacement = await panel.evaluate(() => chrome.runtime.sendNativeMessage("fun.mjshao.annotate", { action: "targets" }))
+  assert.ok(discoveredReplacement.targets?.some(target => target.id === receiver.target.id), JSON.stringify({ receiver: receiver.target, discoveredReplacement }))
+  await panel.evaluate(() => window.dispatchEvent(new Event("focus")))
+  const reboundDeadline = Date.now() + 5000
+  while (true) {
+    const paired = await panel.evaluate(() => chrome.runtime.sendMessage({ action: "pairing" }))
+    if (paired.target?.sessionID === "ses_browser_test" && paired.target.id !== previousTargetID) break
+    if (Date.now() > reboundDeadline) throw new Error(`Receiver did not rebind: ${JSON.stringify({ previousTargetID, paired })}`)
+    await panel.waitForTimeout(50)
+  }
+  const rebound = await panel.evaluate(async () => ({
+    paired: (await chrome.runtime.sendMessage({ action: "pairing" })).target,
+    outbox: (await chrome.runtime.sendMessage({ action: "current" })).outbox,
+  }))
+  assert.equal(rebound.outbox.targetID, rebound.paired.id, "retry batch must move to the replacement receiver")
+  const replacementInfo = await panel.evaluate(targetID => chrome.runtime.sendNativeMessage("fun.mjshao.annotate", { action: "info", targetID }), rebound.paired.id)
+  assert.equal(replacementInfo.ok, true, JSON.stringify(replacementInfo))
   await pick("#unicode")
   await panel.getByLabel("Your feedback").fill("Keep this new feedback local during retry.")
   await panel.getByRole("button", { name: "Retry 1 note", exact: true }).click()
@@ -397,7 +488,7 @@ try {
   assert.ok(!sent[3].text.includes("Keep this new feedback local during retry."))
   assert.equal(await panel.getByLabel("Your feedback").inputValue(), "Keep this new feedback local during retry.")
   await panel.getByRole("button", { name: "Discard draft", exact: true }).click()
-  passed.push("Retry labels the original batch explicitly and leaves newly composed feedback local")
+  passed.push("A restarted receiver rebinds by stable session identity and retries its original batch without touching new feedback")
   await addNote("#public", "Guard against duplicate sends.")
   const duplicateSend = await panel.evaluate(async () => {
     const state = await chrome.runtime.sendMessage({ action: "current" })
@@ -435,7 +526,7 @@ try {
   assert.equal(offline.ok, false)
   assert.ok(offline.error.includes("offline"))
   assert.equal(sent.length, 5)
-  const pending = await worker.evaluate(async () => Object.entries(await chrome.storage.local.get(null)).filter(([key]) => key.startsWith("outbox:")))
+  const pending = await worker.evaluate(async () => Object.entries(await chrome.storage.local.get(null)).filter(([key]) => key === "outbox"))
   assert.equal(pending.length, 1)
   const stale = await panel.evaluate(() => chrome.runtime.sendMessage({ action: "connection" }))
   assert.equal(stale.targets.length, 1)
@@ -444,14 +535,13 @@ try {
   passed.push("Offline paired target retains a retryable outbox without rerouting")
   await panel.getByRole("button", { name: "More review options", exact: true }).click()
   await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
-  await panel.getByRole("button", { name: "Refresh sessions", exact: true }).click()
-  await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
   await panel.locator("#paired").filter({ hasText: "Browser test target" }).waitFor()
-  await panel.getByRole("button", { name: "Copy 1 note", exact: true }).waitFor()
+  await panel.getByRole("button", { name: "Retry 1 note", exact: true }).waitFor()
+  await panel.locator("#link-state").filter({ hasText: "Offline" }).waitFor()
   assert.ok((await panel.locator("#status").textContent()).includes("Session offline"))
   assert.equal(await panel.locator("#link-state").textContent(), "Offline")
   assert.equal(await panel.locator("#status").evaluate(node => node.classList.contains("error")), false)
-  assert.equal(await panel.locator("#copy-round").isVisible(), false)
+  assert.equal(await panel.locator("#copy-round").isVisible(), true)
   await pick("#public")
   await panel.getByLabel("Your feedback").fill("Copy this unsaved draft too.")
   await panel.locator("#draft-state").filter({ hasText: "Draft saved locally" }).waitFor()
@@ -461,33 +551,242 @@ try {
     chrome.runtime.sendMessage = message => { if (message.action === "save") window.storageFirst = true; return send(message) }
     navigator.clipboard.writeText = async text => { if (window.storageFirst) throw new Error("Document is not focused."); window.copiedRound = text }
   })
-  await panel.getByRole("button", { name: "Copy 2 notes", exact: true }).click()
+  await panel.locator("#copy-round").click()
   await panel.getByRole("status").filter({ hasText: "Copied 2 notes" }).waitFor()
   const copied = await panel.evaluate(() => window.copiedRound)
   assert.ok(copied.includes("Copy this round without a session.") && copied.includes("Copy this unsaved draft too."))
-  assert.ok(copied.includes("Page: Annotate review fixture\n"))
+  assert.ok(copied.includes("## Annotate review fixture\n"))
   await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 0)
   assert.ok((await panel.locator("#empty-footnote").textContent()).includes("2 notes copied"))
   passed.push("Copy writes the clipboard within the click, before saving the open draft, with clean page titles")
-  const afterCopy = await worker.evaluate(async () => Object.keys(await chrome.storage.local.get(null)).filter(key => key.startsWith("outbox:")))
+  const afterCopy = await worker.evaluate(async () => Object.keys(await chrome.storage.local.get(null)).filter(key => key === "outbox"))
   assert.equal(afterCopy.length, 0)
-  await panel.getByRole("button", { name: "Reconnect session", exact: true }).waitFor()
+  await panel.getByRole("button", { name: "Send notes", exact: true }).waitFor()
   passed.push("Without a live session, Copy delivers the round, supersedes the failed batch and clears the list")
   await panel.getByRole("button", { name: "Restore last round", exact: true }).click()
-  await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 2)
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 2)
   assert.ok((await panel.locator("#notes .note-comment").first().textContent()).includes("Copy this round without a session."))
   await panel.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error("Document is not focused.") }; delete document.execCommand })
-  await panel.getByRole("button", { name: "Copy 2 notes", exact: true }).click()
+  await panel.locator("#copy-round").click()
   await panel.getByRole("status").filter({ hasText: "Copied 2 notes" }).waitFor()
   passed.push("A refused async clipboard write falls back to the extension's legacy copy permission")
   await panel.getByRole("button", { name: "Restore last round", exact: true }).click()
-  await panel.waitForFunction(() => document.querySelectorAll("#notes li").length === 2)
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 2)
   passed.push("The last delivered round can be restored into the working list")
   await panel.emulateMedia({ colorScheme: "dark" }); await panel.setViewportSize({ width: 420, height: 780 })
   await panel.locator("#panel-body").evaluate(node => { node.scrollTop = 0 })
   if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-dark.png"), fullPage: true })
   await panel.setViewportSize({ width: 320, height: 720 })
   if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-dark-narrow.png") })
+
+  // Run extension session controls through the production worker, native host and
+  // OpenCode adapter. The fake SDK records session creation and never runs a model.
+  const creations = [], createdSessions = new Map(), newPrompts = []
+  let route = { type: "home" }, failCreation = true, failNewDelivery = false
+  const webContext = { location: { directory: "/browser-workspace" },
+    ui: { router: { current: () => route, navigate: next => { route = next } }, dialog: { clear() {} },
+      model: { current: () => ({ providerID: "fixture", modelID: "chosen", variant: "high" }) }, toast: { show() {} } },
+    data: { on: () => () => {}, session: { status: () => "idle" } },
+    client: { session: {
+      get: async ({ sessionID }) => createdSessions.get(sessionID),
+      create: async input => {
+        if (failCreation) throw new Error("Session creation temporarily unavailable")
+        creations.push(input)
+        const session = { ...input, id: `ses_browser_created_${creations.length}`, title: `Fresh browser session ${creations.length}` }
+        createdSessions.set(session.id, session); return session
+      },
+      prompt: async input => { if (failNewDelivery) throw new Error("Delivery interrupted (test)"); newPrompts.push(input); return { id: input.id } },
+    } },
+  }
+  const webOptions = { autoRegister: true, receiver: { root: targetsDirectory, resume: false } }
+  let web = createWebReview(webContext, webOptions)
+  additionalReceivers.push({ close: () => web.dispose() })
+  await web.ready()
+  await pick("#public")
+  await panel.getByLabel("Your feedback").fill("Keep this draft across session controls.")
+  await panel.locator("#draft-state").filter({ hasText: "Draft saved locally" }).waitFor()
+  const notesBeforeControls = await panel.locator("#notes").innerText()
+  await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
+  if (!await panel.locator("#session-options").isVisible()) await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
+  const workspaceButton = panel.getByRole("button", { name: "New session in browser-workspace" })
+  await workspaceButton.waitFor()
+  assert.equal(creations.length, 0)
+  await workspaceButton.click()
+  await panel.locator("#status").filter({ hasText: "Session creation temporarily unavailable" }).waitFor()
+  assert.equal(await panel.locator("#paired").textContent(), "Browser test target")
+  failCreation = false
+  await workspaceButton.click()
+  await panel.locator("#paired").filter({ hasText: "Fresh browser session 1" }).waitFor()
+  assert.deepEqual(creations, [{ location: { directory: "/browser-workspace" }, model: { providerID: "fixture", id: "chosen", variant: "high" } }])
+  assert.equal(route.sessionID, "ses_browser_created_1")
+  assert.deepEqual(newPrompts, [])
+  assert.equal(await panel.locator("#notes").innerText(), notesBeforeControls)
+  assert.equal(await panel.getByLabel("Your feedback").inputValue(), "Keep this draft across session controls.")
+  passed.push("The destination menu creates an empty session from OpenCode home, retries failures and preserves local feedback")
+
+  await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
+  await panel.locator("#new-session:enabled").waitFor({ state: "attached" })
+  for (const [colorScheme, viewport] of [["light", { width: 420, height: 780 }], ["dark", { width: 320, height: 720 }], ["light", { width: 210, height: 390 }]]) {
+    await panel.emulateMedia({ colorScheme }); await panel.setViewportSize(viewport)
+    await panel.getByRole("button", { name: "New session", exact: true }).scrollIntoViewIfNeeded()
+    const layout = await panel.locator("#session-options").evaluate(node => ({ width: node.clientWidth, scrollWidth: node.scrollWidth }))
+    assert.equal(layout.width, layout.scrollWidth, "session controls must reflow without horizontal scrolling")
+    assert.ok((await panel.locator("#session-filter").boundingBox()).width > 100, "the filter must stay readable at zoom")
+    if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, `panel-session-controls-${colorScheme}-${viewport.width}.png`) })
+    await panel.getByRole("button", { name: "New session", exact: true }).focus()
+    await panel.keyboard.press("Tab")
+    assert.equal(await panel.evaluate(() => document.activeElement.id), "disconnect")
+    const disconnectBox = await panel.locator("#disconnect").boundingBox()
+    assert.ok(disconnectBox.y >= 0 && disconnectBox.y + disconnectBox.height <= viewport.height)
+  }
+  await panel.setViewportSize({ width: 320, height: 720 })
+  await worker.evaluate(() => {
+    const send = chrome.runtime.sendNativeMessage.bind(chrome.runtime)
+    chrome.runtime.sendNativeMessage = async (...args) => {
+      const result = await send(...args)
+      if (args[1]?.action === "create-session" && result.ok) {
+        chrome.runtime.sendNativeMessage = send
+        throw new Error("Session creation reply lost (test)")
+      }
+      return result
+    }
+  })
+  route = { type: "session", sessionID: "ses_elsewhere" }
+  await panel.getByRole("button", { name: "New session", exact: true }).click()
+  await panel.locator("#status").filter({ hasText: "Session creation reply lost" }).waitFor()
+  assert.equal(creations.length, 2)
+  await panel.getByRole("button", { name: "New session", exact: true }).click()
+  await panel.locator("#paired").filter({ hasText: "Fresh browser session 2" }).waitFor()
+  assert.equal(creations.length, 2, "retrying a lost acknowledgement must not create a duplicate")
+  assert.deepEqual(creations[1], creations[0], "new sessions inherit the chosen destination's location and model")
+  assert.equal(route.sessionID, "ses_elsewhere", "browser creation must not steal another terminal tab")
+  assert.deepEqual(newPrompts, [])
+  passed.push("New session inherits the chosen project/model, deduplicates a lost reply and does not steal terminal focus")
+
+  failNewDelivery = true
+  const interrupted = await panel.evaluate(async () => {
+    const target = (await chrome.runtime.sendMessage({ action: "pairing" })).target
+    return chrome.runtime.sendMessage({ action: "send", targetID: target.id })
+  })
+  assert.equal(interrupted.ok, false)
+  failNewDelivery = false
+  await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
+  await panel.getByRole("button", { name: "Disconnect", exact: true }).click()
+  await panel.locator("#link-state").filter({ hasText: "Disconnected" }).waitFor()
+  const rejectedSend = await panel.evaluate(async () => {
+    const target = (await chrome.runtime.sendMessage({ action: "pairing" })).target
+    return chrome.runtime.sendMessage({ action: "send", targetID: target.id })
+  })
+  assert.equal(rejectedSend.ok, false)
+  assert.match(rejectedSend.error, /disconnected/)
+  await panel.reload()
+  await panel.locator("#link-state").filter({ hasText: "Disconnected" }).waitFor()
+  await panel.getByLabel("Your feedback").waitFor()
+  assert.equal(await panel.getByLabel("Your feedback").inputValue(), "Keep this draft across session controls.")
+  assert.equal(await panel.locator("#notes").innerText(), notesBeforeControls)
+  const beforeRestart = await panel.evaluate(async () => {
+    const state = await chrome.runtime.sendMessage({ action: "current" })
+    return state.outbox.targetID
+  })
+  await web.dispose()
+  route = { type: "session", sessionID: "ses_browser_created_2" }
+  web = createWebReview(webContext, webOptions)
+  await web.ready()
+  await panel.getByRole("button", { name: "Change destination session", exact: true }).click()
+  await panel.locator("#targets .session-row:enabled").filter({ hasText: "Fresh browser session 2" }).click()
+  await panel.locator("#link-state").filter({ hasText: "Live" }).waitFor()
+  const afterReconnect = await panel.evaluate(async () => ({
+    paired: (await chrome.runtime.sendMessage({ action: "pairing" })).target,
+    outbox: (await chrome.runtime.sendMessage({ action: "current" })).outbox,
+  }))
+  assert.notEqual(afterReconnect.paired.id, beforeRestart)
+  assert.equal(afterReconnect.outbox.targetID, afterReconnect.paired.id)
+  assert.deepEqual(newPrompts, [])
+  passed.push("Disconnect survives reload; explicit reconnect after receiver restart preserves retries, notes and drafts without sending")
+  // Start a clean isolated round without disturbing destination/session fixtures.
+  await worker.evaluate(async () => {
+    const keys = Object.keys(await chrome.storage.local.get(null)).filter(key => /^(note:|draft:|outbox$)/.test(key))
+    await chrome.storage.local.remove(keys)
+  })
+  const crossSent = []
+  const crossReceiver = await createReceiver({ root: targetsDirectory, sessionID: "ses_cross_page", title: "Cross-page target", directory: "/isolated-test", resume: false,
+    client: { session: { get: async () => ({}), prompt: async input => { crossSent.push(input); return { id: input.id } } } } })
+  additionalReceivers.push(crossReceiver)
+  await panel.evaluate(target => chrome.runtime.sendMessage({ action: "pair", target }), crossReceiver.target)
+  await page.goto(url); await activate(); await panel.reload()
+  await panel.locator("#paired").filter({ hasText: "Cross-page target" }).waitFor()
+  await pick("#public")
+  await panel.getByLabel("Your feedback").fill("Page A feedback")
+  await panel.getByRole("button", { name: "Add note", exact: true }).click()
+  await panel.getByRole("status").filter({ hasText: "Saved locally" }).waitFor()
+  await page.goto(`${url}/second`); await activate()
+  await panel.locator("#page-url").filter({ hasText: "/second" }).waitFor()
+  await pick("#public")
+  await panel.getByLabel("Your feedback").fill("Page B feedback")
+  await panel.getByRole("button", { name: "Add note", exact: true }).click()
+  await panel.locator("#count").filter({ hasText: "2 notes in this round · 2 pages" }).waitFor()
+  assert.equal(await panel.locator(".page-group").count(), 2)
+  assert.deepEqual(await panel.locator(".note-number").allTextContents(), ["1", "2"])
+  if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-cross-page.png") })
+  assert.equal(await panel.locator(".warning").filter({ hasText: "elsewhere" }).count(), 0)
+  const globalState = await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))
+  assert.deepEqual(globalState.anchorStates, ["elsewhere", "located"])
+  await panel.getByRole("button", { name: "Delete note 1", exact: true }).click()
+  await panel.locator("#count").filter({ hasText: "1 note in this round" }).waitFor()
+  await panel.getByRole("button", { name: "Undo", exact: true }).click()
+  await panel.locator("#count").filter({ hasText: "2 notes in this round · 2 pages" }).waitFor()
+  // Showing an off-page target navigates back, with all feedback still in the round.
+  await panel.getByRole("button", { name: "Show note 1 on page", exact: true }).click()
+  await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, url)
+  await panel.getByRole("button", { name: "Send 2 notes", exact: true }).click()
+  await panel.getByRole("status").filter({ hasText: "Sent 2 notes to Cross-page target" }).waitFor()
+  assert.equal(crossSent.length, 1)
+  assert.equal((crossSent[0].text.match(/^## Annotate review fixture$/gm) || []).length, 2)
+  assert.ok(crossSent[0].text.includes(`URL: ${url}\n`))
+  assert.ok(crossSent[0].text.includes(`URL: ${url}/second\n`))
+  assert.ok(crossSent[0].text.includes("### Annotation 2 (comment)"))
+  assert.equal(await panel.locator("#notes .note").count(), 0)
+  await panel.getByRole("button", { name: "Restore last round", exact: true }).click()
+  await panel.locator("#count").filter({ hasText: "2 notes in this round · 2 pages" }).waitFor()
+  assert.equal(await panel.locator(".page-group").count(), 2)
+  const existingPageEvent = context.waitForEvent("page")
+  const existingPageTab = await panel.evaluate(url => chrome.tabs.create({ url, active: false }), `${url}/second`)
+  const existingPage = await existingPageEvent
+  await existingPage.waitForLoadState()
+  const originalTabID = (await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))).tabID
+  await panel.evaluate(id => chrome.tabs.update(id, { active: true }), existingPageTab.id)
+  const existingTargets = await cdp.send("Target.getTargets", { filter: [{ type: "tab", exclude: false }, { exclude: true }] })
+  await cdp.send("Extensions.triggerAction", { id: installation.extensionID, targetId: existingTargets.targetInfos.find(tab => tab.url === `${url}/second`).targetId })
+  await panel.waitForFunction(async id => !!(await chrome.storage.session.get(`tab:${id}`))[`tab:${id}`]?.page, existingPageTab.id)
+  await panel.evaluate(id => chrome.tabs.update(id, { active: true }), originalTabID)
+  await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, url)
+  const tabCount = context.pages().length
+  await panel.getByRole("button", { name: "Edit note 2", exact: true }).click()
+  await panel.locator("#composer-title").filter({ hasText: "Edit note" }).waitFor()
+  await panel.getByLabel("Your feedback").fill("Page B edited from page A")
+  await panel.getByRole("button", { name: "Save changes", exact: true }).click()
+  await panel.getByRole("status").filter({ hasText: "Saved locally" }).waitFor()
+  const editedState = await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))
+  assert.equal(editedState.tabID, existingPageTab.id)
+  assert.equal(context.pages().length, tabCount)
+  assert.equal(editedState.notes[1].page.url, `${url}/second`)
+  assert.equal(editedState.notes[1].comment, "Page B edited from page A")
+  passed.push("A→B round groups notes globally; off-page Delete/Undo/reveal, one two-page delivery and global restoration work")
+  passed.push("Off-page Edit reuses an exact-URL tab, preserves page ownership and saves its comment")
+  await panel.getByRole("button", { name: "Show note 1 on page", exact: true }).click()
+  await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, url)
+  await pick("#public")
+  await panel.getByLabel("Your feedback").fill("Page A later feedback")
+  await panel.getByRole("button", { name: "Add note", exact: true }).click()
+  await panel.locator("#count").filter({ hasText: "3 notes in this round · 2 pages" }).waitFor()
+  assert.deepEqual(await panel.locator(".note-number").allTextContents(), ["1", "2", "3"])
+  const interleaved = await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))
+  assert.deepEqual(interleaved.notes.map(note => note.comment), ["Page A feedback", "Page A later feedback", "Page B edited from page A"])
+  assert.deepEqual(interleaved.anchorStates, ["located", "located", "elsewhere"])
+  const interleavedMarkdown = await panel.locator("#preview").textContent()
+  assert.deepEqual([...interleavedMarkdown.matchAll(/^### Annotation (\d+)/gm)].map(match => Number(match[1])), [1, 2, 3])
+  assert.ok(interleavedMarkdown.indexOf("Page A later feedback") < interleavedMarkdown.indexOf("Page B edited from page A"))
+  passed.push("Interleaved A→B→A notes use contiguous page-group numbering in worker state, panel and Markdown")
   await panel.evaluate(() => {
     const send = chrome.runtime.sendMessage.bind(chrome.runtime)
     chrome.runtime.sendMessage = async message => {
@@ -509,5 +808,5 @@ try {
   if (panel) console.error(JSON.stringify({ passed, ui: await panel.locator("body").innerText(), state: await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" })) }, null, 2))
   throw error
 } finally {
-  await context?.close(); await receiver.close(); await Promise.all(additionalReceivers.map(receiver => receiver.close())); await new Promise(resolve => server.close(resolve)); await rm(temp, { recursive: true, force: true })
+  await context?.close(); await receiver?.close(); await Promise.all(additionalReceivers.map(receiver => receiver.close())); await new Promise(resolve => server.close(resolve)); await rm(temp, { recursive: true, force: true })
 }

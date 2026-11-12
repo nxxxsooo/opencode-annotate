@@ -10,10 +10,10 @@ import { listTargets } from "../bridge/receiver.mjs"
 import { request } from "../bridge/wire.mjs"
 
 const sampleReview = () => ({
-  version: 1,
-  page: { url: "https://example.test/app", title: "App Preview" },
+  version: 2,
   annotations: [
     {
+      page: { url: "https://example.test/app", title: "App Preview" },
       id: "note-1",
       revision: 1,
       kind: "comment",

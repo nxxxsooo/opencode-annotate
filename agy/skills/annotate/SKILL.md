@@ -1,11 +1,11 @@
 ---
 name: annotate
-description: Review assistant replies or local documents in the bundled Annotate TUI, or pair the Chrome companion for webpage annotation. Use for /annotate, /annotate-web, reply/document annotation, or webpage review in an AGY session.
+description: Review assistant replies or local documents in the bundled Annotate TUI, or connect the Chrome companion for webpage annotation. Use for /annotate, reply/document annotation, or webpage review in an AGY session.
 ---
 
 # Annotate (`agy-annotate`)
 
-Use this skill when the user runs `/annotate`, `/annotate-web`, or asks to annotate assistant responses, documents, or webpages.
+Use this skill when the user runs `/annotate` or asks to annotate assistant responses, documents, or webpages.
 
 ## Execution Guide for the Agent:
 
@@ -22,7 +22,7 @@ Run the command:
 npx --yes --package @nxxxsooo/opencode-annotate@latest agy-annotate tui "<path/to/doc.md>"
 ```
 
-### 3. When the user types `/annotate-web` (or provides a URL/HTML file):
+### 3. When the user provides a URL/HTML file (e.g., `/annotate page.html`) or asks for webpage review:
 Run the command:
 ```bash
 npx --yes --package @nxxxsooo/opencode-annotate@latest agy-annotate web [url-or-html-path]

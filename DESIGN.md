@@ -198,7 +198,7 @@ Sidebar icons are inline stroke SVGs (normally 18px, stroke width 1.7, rounded c
 
 ### Buttons and choices
 
-- **Primary delivery:** full width, minimum height 39px. Disabled delivery uses `soft`, `line`, and `muted` at full opacity. Its label communicates pending count, sending, reconnect, retry, or all-sent state.
+- **Primary delivery:** stable Send action with a separate Copy instead button, minimum height 39px. The buttons share a row when space allows and wrap to full rows in narrow reflow. Disabled delivery uses `soft`, `line`, and `muted` at full opacity. The Send label communicates pending count, sending, retry, or all-sent state.
 - **Default:** outlined `surface` control, minimum height 36px. Hover changes the border to `accent`. Active picking fills the button with the accent and takes the full row.
 - **Soft:** transparent fill with the quiet divider border; used for Keep editing.
 - **Text:** muted, transparent, minimum height 32px; hover reveals an underline and stronger text.
@@ -217,7 +217,14 @@ Selected evidence is a compact tonal block with a quiet border and picker icon. 
 
 Rows separate the numbered marker, muted Show on page quote, feedback, pending/sent metadata, and Edit/Delete controls. The first row omits the top divider and uses 5px top padding. Sent state includes a check icon and text; warnings retain the note. Deletion exposes an inline Undo action.
 
-Delivery keeps destination, count-aware action, and live status together. The destination remains named when disconnected. Utilities and the native session chooser are disclosed in the scrolling work area. Sidecar snippets are styling and semantic-state examples; `panel.mjs` supplies their application behavior.
+Delivery keeps destination, count-aware Send, separate Copy instead, and live status together. The destination remains named when disconnected. Its popover presents the current title/directory and alternative sessions without a manual refresh control. Utilities remain disclosed in the scrolling work area. Sidecar snippets are styling and semantic-state examples; `panel.mjs` supplies their application behavior.
+
+The destination popover includes text-button actions for New session and Disconnect.
+Blank OpenCode homes appear as creation-only workspace rows with the full directory in
+the tooltip. Disconnected destinations remain named and can be selected to reconnect.
+Filter and sort controls wrap onto separate rows at narrow widths; session actions wrap
+and remain keyboard-reachable inside the scrolling popover. Creating or reconnecting a
+session leaves notes and drafts local until Send.
 
 Show on page scrolls smoothly to a verified anchor and displays a highlight for 1,600ms without activating the element. Reduced motion changes page scrolling to `instant`; the sidebar's reduced-motion rule enforces `scroll-behavior: auto`. There are no entrance animations or CSS transition timings to extract.
 

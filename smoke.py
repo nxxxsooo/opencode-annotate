@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 import shlex
+import shutil
 import socket as unix_socket
 import struct
 import subprocess
@@ -26,10 +27,13 @@ ASK = "C-c" if SEND_KEY else "q"
 EXPECTED_MARGIN = int(os.environ.get("ANNOTATE_EXPECT_MARGIN", "0"))
 TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
-root = Path(tempfile.mkdtemp(prefix="annotate-last-smoke-", dir=TMP)).resolve()
-socket = f"annotate-last-smoke-{os.getpid()}"
+root = Path(tempfile.mkdtemp(prefix="annotate-smoke-", dir=TMP)).resolve()
+socket = f"annotate-smoke-{os.getpid()}"
 session = None
 event_number = 0
+# A short fixture home keeps Unix socket paths under macOS's 104-byte limit.
+# Only the isolated TUI process overrides os.homedir; the managed API stays untouched.
+fixture_home = Path(tempfile.mkdtemp(prefix="oa-", dir="/tmp"))
 MESSAGE_SUFFIX = uuid.uuid4().hex
 
 
@@ -46,6 +50,40 @@ def api(method, route, data=None):
         raise RuntimeError(f"API {method} {route} failed ({result.returncode}); "
                            f"stderr: {result.stderr[:2000]}; stdout: {result.stdout[:2000]}")
     return json.loads(result.stdout) if result.stdout.strip() else None
+
+
+def bridge_request(target, message):
+    with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as connection:
+        connection.settimeout(20)
+        connection.connect(target["socket"])
+        body = json.dumps({**message, "targetID": target["id"]}).encode()
+        connection.sendall(struct.pack("<I", len(body)) + body)
+        header = b""
+        while len(header) < 4:
+            chunk = connection.recv(4 - len(header))
+            if not chunk:
+                raise AssertionError("Bridge closed before returning a response header")
+            header += chunk
+        size = struct.unpack("<I", header)[0]
+        data = b""
+        while len(data) < size:
+            chunk = connection.recv(size - len(data))
+            if not chunk:
+                raise AssertionError("Bridge returned an incomplete response")
+            data += chunk
+        return json.loads(data)
+
+
+def wait_inbox(text, session_id):
+    # A prior "Sent 1 annotation" toast can still be visible after the next review
+    # closes. Wait for durable admission, not that reused success label.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        inbox = api("get", f"/api/session/{session_id}/inbox")
+        if text in json.dumps(inbox, ensure_ascii=False):
+            return inbox
+        time.sleep(0.1)
+    raise AssertionError(f"Feedback {text!r} did not reach the inbox; evidence: {root}")
 
 
 def tmux(*args, check=True):
@@ -144,7 +182,7 @@ def submit(command, label):
     keys("Enter")
 
 
-def open_review(label, command="/annotate-last", filename="last-reply.md"):
+def open_review(label, command="/annotate", filename="last-reply.md"):
     submit(command, label)
     output = wait(filename + " · 0 annotations", label)
     if INHERIT_THEME:
@@ -197,11 +235,19 @@ try:
     # client SDK and API. resume:false is the only submission change, to avoid an LLM run.
     fixture = root / "fixture"
     fixture.mkdir()
+    # Exercise URL routing while keeping Chrome closed and the real profile untouched.
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    opener = bin_dir / "open"
+    opener.write_text('#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n'
+                      f'with Path({str(root / "opened.jsonl")!r}).open("a") as output:\n'
+                      '    output.write(json.dumps(sys.argv[1:]) + "\\n")\n')
+    opener.chmod(0o700)
     (fixture / "package.json").write_text(json.dumps({
-        "name": "annotate-last-smoke", "type": "module", "exports": {".": "./server.ts", "./tui": "./tui.ts"},
+        "name": "annotate-smoke", "type": "module", "exports": {".": "./server.ts", "./tui": "./tui.ts"},
     }))
     (fixture / "server.ts").write_text(f'''import {{ registerConfiguration }} from {json.dumps((Path(unquote(urlparse(ENTRYPOINT).path)).parent / "configuration.mjs").as_uri())}
-export default {{ id: "test.annotate-last", async setup(ctx) {{ await registerConfiguration(ctx) }} }}
+export default {{ id: "test.annotate", async setup(ctx) {{ await registerConfiguration(ctx) }} }}
 ''')
     (root / "opencode.jsonc").write_text('// Auto-annotation options load through real JSONC configuration.\n' + json.dumps({
         "plugins": [{"package": str(fixture), "options": BINARY_OPTIONS}],
@@ -209,9 +255,11 @@ export default {{ id: "test.annotate-last", async setup(ctx) {{ await registerCo
     ready = root / "plugin-ready"
     (fixture / "tui.ts").write_text(f'''import plugin from {json.dumps(ENTRYPOINT)}
 import {{ appendFileSync, readFileSync, watchFile, unwatchFile, writeFileSync }} from "node:fs"
+import os from "node:os"
+os.homedir = () => {json.dumps(str(fixture_home))}
 export default {{
   ...plugin,
-  id: "test.annotate-last",
+  id: "test.annotate",
   async setup(ctx) {{
     const handlers = new Map()
     const eventFile = {json.dumps(str(root / "event.json"))}
@@ -266,6 +314,7 @@ export default {{
       keymap: {{ ...ctx.keymap, layer(factory) {{
         return ctx.keymap.layer(() => {{
           const layer = factory()
+          writeFileSync({json.dumps(str(root / "registered-commands.json"))}, JSON.stringify(layer.commands.map(command => ({{ id: command.id, slash: command.slash?.name }}))))
           writeFileSync({json.dumps(str(ready))}, "ready")
           return {{ ...layer, commands: [...layer.commands, {{
             id: "test.annotate-home", slash: {{ name: "smoke-home", arguments: true }},
@@ -310,7 +359,10 @@ export default {{
           writeFileSync({json.dumps(str(root / "blank-session.json"))}, JSON.stringify(session))
           return session
         }},
-        prompt: (input) => ctx.client.session.prompt({{ ...input, resume: false }}),
+        prompt(input) {{
+          appendFileSync({json.dumps(str(root / "prompt-inputs.jsonl"))}, JSON.stringify(input) + "\\n")
+          return ctx.client.session.prompt({{ ...input, resume: false }})
+        }},
       }} }},
     }})
     return () => {{ unwatchFile(eventFile); dispose() }}
@@ -318,7 +370,7 @@ export default {{
 }}
 ''')
     info = api("post", "/api/session", {
-        "title": "Annotate-last isolated smoke test", "location": {"directory": str(root)},
+        "title": "Annotate isolated smoke test", "location": {"directory": str(root)},
     })["data"]
     session = info["id"]
     api("delete", f"/api/session/{session}")
@@ -343,10 +395,10 @@ export default {{
         "theme": {"name": "dracula", "mode": THEME_MODE},
         "debug": {"devtools": False}, "tabs": {"mode": "off"},
     })
-    command = shlex.join(["env", f"OPENCODE_CLI_CONFIG_CONTENT={inline}",
+    command = shlex.join(["env", f"OPENCODE_CLI_CONFIG_CONTENT={inline}", f"PATH={bin_dir}:{os.environ['PATH']}",
                           "opencode", "--session", session, str(root)])
     tmux("new-session", "-d", "-s", "check", "-x", "140", "-y", "42", "-c", str(root), command)
-    wait("Annotate-last isolated smoke test", "host-ready", 60)
+    wait("Annotate isolated smoke test", "host-ready", 60)
     # The session title can render before the plugin's mounted keymap exists.
     deadline = time.monotonic() + 60
     while not ready.exists():
@@ -354,6 +406,12 @@ export default {{
             (root / "plugin-ready-failed.txt").write_text(screen())
             raise AssertionError("The isolated plugin keymap did not mount")
         time.sleep(0.05)
+
+    commands = json.loads((root / "registered-commands.json").read_text())
+    assert any(command.get("slash") == "annotate" for command in commands), commands
+    assert all(command.get("slash") not in ("annotate-last", "annotate-web")
+               and command["id"] not in ("opencode-annotate.annotate-last", "opencode-annotate.annotate-web")
+               for command in commands), commands
 
     # Imported history alone must not open a review. Short replies and progress updates
     # stay closed; a successful new completion opens the exact reply via the real API.
@@ -371,7 +429,7 @@ export default {{
     keys("q")
     wait("Sent 1 annotation", "auto-sent")
     wait_event(completion)
-    automatic_inbox = json.dumps(api("get", f"/api/session/{session}/inbox"))
+    automatic_inbox = json.dumps(wait_inbox("SMOKE automatic feedback", session))
     assert "SMOKE automatic feedback" in automatic_inbox and message_id("auto") in automatic_inbox
     event("session.step.ended", {"assistantMessageID": message_id("auto"), "finish": "stop"})
     event("session.execution.succeeded", {})
@@ -407,7 +465,7 @@ export default {{
     wait("Send annotations?", "confirmation")
     keys("Enter")
     wait("Sent 1 annotation", "sent")
-    inbox = api("get", f"/api/session/{session}/inbox")
+    inbox = wait_inbox("SMOKE exact-session feedback", session)
     (root / "inbox.json").write_text(json.dumps(inbox, ensure_ascii=False, indent=2))
     encoded = json.dumps(inbox, ensure_ascii=False)
     assert "SMOKE exact-session feedback" in encoded, encoded
@@ -422,7 +480,7 @@ export default {{
         keys("C-s")
         output = wait("Sent 1 annotation", "send-key-sent")
         assert "Send annotations?" not in output, output
-        inbox = api("get", f"/api/session/{session}/inbox")
+        inbox = wait_inbox("SMOKE one-key feedback", session)
         assert "SMOKE one-key feedback" in json.dumps(inbox, ensure_ascii=False)
 
         # q with notes returns and sends without OpenCode's confirmation.
@@ -431,7 +489,7 @@ export default {{
         keys("q")
         output = wait("Sent 1 annotation", "q-send-sent")
         assert "Send annotations?" not in output, output
-        inbox = api("get", f"/api/session/{session}/inbox")
+        inbox = wait_inbox("SMOKE q feedback", session)
         assert "SMOKE q feedback" in json.dumps(inbox, ensure_ascii=False)
 
     open_review("empty-open", "/annotate")
@@ -458,17 +516,11 @@ export default {{
     wait("Document:", "document-confirmation")
     keys("Enter")
     wait("Sent 1 annotation", "document-sent")
-    document_inbox = api("get", f"/api/session/{session}/inbox")
+    document_inbox = wait_inbox("SMOKE document feedback", session)
     encoded = json.dumps(document_inbox, ensure_ascii=False)
     assert "SMOKE document feedback" in encoded, encoded
     assert str(document) in encoded, encoded
     assert document.read_text() == content, "Review modified the original document"
-
-    open_review("last-fixed", '/annotate-last 2')
-    wait("Terminal review fixture", "last-fixed-content")
-    keys("q")
-    wait("No annotations", "last-fixed-return")
-    assert api("get", f"/api/session/{session}/inbox") == document_inbox
 
     # Mid-turn progress updates are reachable through the picker.
     submit("/annotate-pick", "pick")
@@ -482,33 +534,35 @@ export default {{
     wait("Send annotations?", "pick-confirmation")
     keys("Enter")
     wait("Sent 1 annotation", "pick-sent")
-    pick_inbox = api("get", f"/api/session/{session}/inbox")
+    pick_inbox = wait_inbox("SMOKE progress feedback", session)
     encoded = json.dumps(pick_inbox)
     assert message_id("progress") in encoded and "SMOKE progress feedback" in encoded, encoded
 
-    # Browser review opens a local receiver without a model call or visible browser.
-    submit("/annotate-web", "web")
-    wait("Ready for browser pairing", "web-pairing")
-    registry = Path.home() / ".local/share/opencode-annotate/targets"
+    # /annotate routes explicit browser targets; opening neither sends nor runs a model.
+    submit("/annotate https://example.test/review", "web-url")
+    wait("Page opened", "web-url-opened")
+    html_file = root / "中文 page.html"
+    html_file.write_text("<h1>Browser fixture</h1>")
+    submit('/annotate "中文 page.html"', "web-html")
+    deadline = time.monotonic() + 30
+    while len((root / "opened.jsonl").read_text().splitlines()) < 2:
+        if time.monotonic() > deadline:
+            raise AssertionError("The HTML target did not reach the browser opener")
+        time.sleep(0.05)
+    opened = [json.loads(line) for line in (root / "opened.jsonl").read_text().splitlines()]
+    assert opened == [["-a", "Google Chrome", "https://example.test/review"], ["-a", "Google Chrome", html_file.as_uri()]], opened
+
+    # Automatic registration provides a receiver without a separate command.
+    registry = fixture_home / ".local/share/opencode-annotate/targets"
     target = next(json.loads(p.read_text()) for p in registry.glob("*.json")
                   if json.loads(p.read_text()).get("sessionID") == session)
     batch = {"action": "send", "targetID": target["id"], "batchID": "12345678-1234-1234-1234-123456789012",
-             "review": {"version": 1, "page": {"url": "https://example.test/review", "title": "Smoke page"},
-                        "annotations": [{"id": "smoke-note", "revision": 1, "kind": "comment",
+             "review": {"version": 2,
+                        "annotations": [{"page": {"url": "https://example.test/review", "title": "Smoke page"}, "id": "smoke-note", "revision": 1, "kind": "comment",
                                          "comment": "SMOKE browser exact-session feedback", "createdAt": "2026-10-19T00:00:00Z",
                                          "anchor": {"type": "text", "quote": "Alpha", "selector": "#alpha"}}]}}
     def send_batch():
-        with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as connection:
-            connection.settimeout(20)
-            connection.connect(target["socket"])
-            body = json.dumps(batch).encode()
-            connection.sendall(struct.pack("<I", len(body)) + body)
-            header = connection.recv(4)
-            size = struct.unpack("<I", header)[0]
-            data = b""
-            while len(data) < size:
-                data += connection.recv(size - len(data))
-            return json.loads(data)
+        return bridge_request(target, batch)
     receipt = send_batch()
     assert receipt["state"] == "admitted", receipt
     assert send_batch() == receipt
@@ -521,10 +575,18 @@ export default {{
     # connected SDK, navigate to it and accept the first feedback without a seed prompt.
     submit("/smoke-home", "blank-home")
     wait("Blank home ready", "blank-home-ready")
-    submit("/annotate-web", "blank-web")
-    wait("Ready for browser pairing", "blank-web-pairing")
+    workspace = next(json.loads(p.read_text()) for p in registry.glob("*.json")
+                     if json.loads(p.read_text()).get("kind") == "workspace"
+                     and json.loads(p.read_text()).get("pid") == target["pid"])
+    workspace_info = bridge_request(workspace, {"action": "info"})
+    assert Path(workspace_info["target"]["directory"]).resolve() == root
+    creation = {"action": "create-session", "requestID": "22345678-1234-1234-1234-123456789012"}
+    created = bridge_request(workspace, creation)
+    assert created["ok"], created
+    assert bridge_request(workspace, creation) == created, "Creation retry must reuse the session"
     blank = json.loads((root / "blank-session.json").read_text())
     blank_session = blank["id"]
+    assert created["target"]["sessionID"] == blank_session
     assert blank_session != session
     assert Path(blank["location"]["directory"]).resolve() == root
     selected = json.loads((root / "blank-create-input.json").read_text())["selected"]
@@ -539,26 +601,39 @@ export default {{
     batch["targetID"] = target["id"]
     batch["review"]["annotations"][0]["comment"] = "SMOKE blank-session feedback"
     receipt = send_batch()
+    (root / "blank-target.json").write_text(json.dumps(target))
+    (root / "blank-receipt.json").write_text(json.dumps(receipt))
     assert receipt["state"] == "admitted", receipt
-    blank_inbox = json.dumps(api("get", f"/api/session/{blank_session}/inbox"))
-    assert "SMOKE blank-session feedback" in blank_inbox and receipt["messageID"] in blank_inbox
+    blank_inbox = json.dumps(wait_inbox("SMOKE blank-session feedback", blank_session))
+    assert receipt["messageID"] in blank_inbox
+    blank_prompts = [json.loads(line) for line in (root / "prompt-inputs.jsonl").read_text().splitlines()
+                     if json.loads(line)["sessionID"] == blank_session]
+    assert len(blank_prompts) == 1
+    assert blank_prompts[0]["delivery"] == "steer", blank_prompts
+    assert blank_prompts[0]["resume"] is True, blank_prompts
     assert api("get", f"/api/session/{blank_session}/message")["data"] == [], "No model turn should run"
     assert "SMOKE blank-session feedback" not in json.dumps(api("get", f"/api/session/{session}/inbox"))
-    submit("/annotate-web off", "blank-web-off")
-    wait("Browser pairing revoked", "blank-web-revoked")
-    assert not (registry / f'{target["id"]}.json').exists()
+    disconnected = bridge_request(target, {"action": "disconnect"})
+    assert disconnected["ok"] and disconnected["target"]["connected"] is False
+    assert send_batch()["ok"] is False, "Disconnected sessions must reject feedback"
+    assert bridge_request(target, {"action": "connect"})["target"]["connected"] is True
+    assert send_batch() == receipt, "Reconnect must preserve delivery deduplication"
+
+    prompts = [json.loads(line) for line in (root / "prompt-inputs.jsonl").read_text().splitlines()]
+    assert all(prompt["delivery"] == "steer" and prompt["resume"] is True for prompt in prompts), prompts
 
     print(json.dumps({"passed": ["JSONC auto-annotation options", "automatic exact-reply lookup",
                                   "short/progress suppression", "automatic trigger deduplication", "JSONC toggle hot reload",
                                   "real TUI launch", "create annotation", "terminal restore",
-                                  "confirmed API delivery", "empty review", "cancelled review",
-                                  "document path arguments", "document API delivery", "last fixed to latest",
-                                   "picker with progress updates", "browser pairing", "browser API delivery", "retry deduplication",
-                                   "blank-home session creation", "blank-session browser delivery", "blank-session revocation"],
+                                   "confirmed API delivery", "steer/resume intent", "empty review", "cancelled review",
+                                  "document path arguments", "document API delivery", "retired commands removed",
+                                   "picker with progress updates", "URL and HTML routing", "automatic browser connection", "browser API delivery", "retry deduplication",
+                                   "extension blank-home session creation", "blank-session browser delivery", "disconnect and reconnect"],
                       "theme": THEME_MODE, "inheritedColors": INHERIT_THEME, "sendKey": SEND_KEY,
                       "evidence": str(root)}, ensure_ascii=False))
 finally:
     tmux("kill-server", check=False)
+    shutil.rmtree(fixture_home)
     if session:
         api("delete", f"/api/session/{session}")
     blank_file = root / "blank-session.json"

@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto"
 import { test } from "node:test"
 import { listTargets } from "./bridge/receiver.mjs"
 import { request } from "./bridge/wire.mjs"
-import { createReferenceCommand } from "./reference-command.mjs"
 
 const moduleURL = new URL("./review.mjs", import.meta.url)
 const load = () => import(moduleURL)
@@ -49,7 +48,7 @@ test("an interrupted reply keeps its streamed text selectable", async () => {
 
 function context({ confirm = true, sendError, changeRoute, paginated, sessionDir, status = "idle", message, route: initialRoute, pluginOptions = {}, skills = ["what"] } = {}) {
   let route = initialRoute ?? { type: "session", sessionID: "ses_original" }
-  const sent = [], referenced = [], transitions = [], notices = [], created = [], navigations = [], listeners = new Map(), skillLists = []
+  const sent = [], transitions = [], notices = [], created = [], navigations = [], listeners = new Map(), skillLists = []
   let confirmationCount = 0
   let pages = 0
   let gets = 0
@@ -121,12 +120,7 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
       if (sendError) throw new Error("Delivery failed")
       sent.push(input)
       return { id: input.id, sessionID: input.sessionID, type: "user" }
-    },
-      async synthetic(input) {
-        if (sendError) throw new Error("Delivery failed")
-        referenced.push(input)
-        return { id: input.id, sessionID: input.sessionID, type: "synthetic" }
-      } } },
+    } } },
     ui: {
       router: { current: () => route, navigate(next) { navigations.push(next); route = next } },
       model: { current: () => ({ providerID: "fixture", modelID: "fixture", variant: "high" }) },
@@ -142,7 +136,7 @@ function context({ confirm = true, sendError, changeRoute, paginated, sessionDir
     },
   }
   return {
-    ctx, sent, referenced, transitions, notices, created, navigations, skillLists,
+    ctx, sent, transitions, notices, created, navigations, skillLists,
     confirmations: () => confirmationCount, pages: () => pages, gets: () => gets,
     setStatus: value => { status = value },
     setRoute: value => { route = value },
@@ -223,41 +217,15 @@ test("real TUI annotations go only to the captured session even after tab change
   assert.deepEqual(await readdir(h.root), [])
 })
 
-test("/ref TUI sends combined feedback once to the captured session, or cancels without continuing", async t => {
-  for (const options of [{ sendIntent: true }, { confirm: true }, { confirm: false }]) {
-    const h = await harness(t, { ...options, expectedText: /^# My reference comment\n\nApply this decision\.[\s\S]*> Alpha paragraph\./ })
-    const get = h.ctx.client.session.get
-    h.ctx.client.session.get = async input => input.sessionID === "ses_source" ? {
-      id: "ses_source", title: "Previous decision", projectID: "project",
-      location: { directory: "/source" }, time: { created: 1, updated: 2 },
-    } : get(input)
-    h.ctx.client.message.list = async ({ sessionID, type }) => {
-      if (type === "user") return { data: [{ id: "msg_spoken", type: "user", text: "Hello", time: { created: 1 } }], cursor: {} }
-      assert.equal(sessionID, "ses_source")
-      return { data: [reply("msg_source", "Alpha paragraph.")], cursor: {} }
-    }
-    h.ctx.ui.dialog.prompt = async () => {
-      h.setRoute({ type: "session", sessionID: "ses_other" })
-      return "Apply this decision."
-    }
-    const reference = createReferenceCommand(h.ctx, { review: h.command, promptComment: h.ctx.ui.dialog.prompt })
-    t.after(reference.dispose)
-    await reference.run("--tui ses_source")
-    assert.equal(h.referenced.length, 0, "references must use session.prompt, not session.synthetic")
-    assert.equal(h.sent.length, options.confirm === false ? 0 : 1)
-    if (h.sent.length) {
-      assert.equal(h.sent[0].sessionID, "ses_original")
-      assert.equal(h.sent[0].delivery, "steer")
-      assert.equal(h.sent[0].resume, true)
-      assert.equal(h.sent[0].metadata.annotateReference.sessionID, "ses_source")
-      assert.ok(!Object.hasOwn(h.sent[0], "description"), "session.prompt must not receive a description field")
-      assert.match(h.sent[0].text, /Apply this decision\.[\s\S]*# Referenced conversation[\s\S]*请补充具体例子。/)
-    }
-    assert.equal(h.confirmations(), options.sendIntent ? 0 : 1)
-    assert.match(h.invocation().file, /referenced-conversation\.md$/)
-    assert.deepEqual(h.transitions, ["suspend", "resume", "render"])
-    assert.deepEqual(await readdir(h.root), [])
-  }
+test("finished assistant eligibility preserves interrupted text and excludes unfinished or failed output", async () => {
+  const { finishedAssistant } = await load()
+  assert.equal(finishedAssistant(reply("done", "Text")), true)
+  assert.equal(finishedAssistant(reply("progress", "Text", { finish: "tool-calls" })), true)
+  assert.equal(finishedAssistant(reply("aborted", "Text", { finish: "error", error: { type: "aborted" } })), true)
+  assert.equal(finishedAssistant(reply("streaming", "Text", { time: { created: 1 } })), false)
+  assert.equal(finishedAssistant(reply("failed", "Text", { error: {}, finish: "error" })), false)
+  assert.equal(finishedAssistant(reply("failed", "Text", { finish: "error" })), false)
+  assert.equal(finishedAssistant({ type: "user", text: "Text" }), false)
 })
 
 test("confirmed annotations continue without relying on cached session status", async t => {

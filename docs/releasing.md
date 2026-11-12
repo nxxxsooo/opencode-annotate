@@ -1,5 +1,27 @@
 # Releasing
 
+## 0.16.0 candidate — /ref moves to Another — 2026-11-12
+
+Prepared from public `origin/main` in the isolated `release/0.16.0` worktree.
+Mingjian authorized Annotate to ship first without waiting for Another:
+“不用等啊，把这边做的都搞定，然后推送发布”. This breaking release removes
+conversation-reference commands and agent tools; the server entry stays for option
+sync and existing `opencode.json(c)` entries remain valid. Remove obsolete
+`annotate_session_*` permission rules. Another's next release provides cross-agent
+`/ref` through `another setup`; stay on Annotate 0.15.0 until then if you need it.
+
+| Surface | Candidate state |
+|---|---|
+| Source | One local release commit; push, tag and publication reserved for Mingjian. |
+| Local checks | `npm ci`, `build:tui`, formatting/Clippy and 403 Rust tests, `npm run check` (95 Node tests and pack dry-run), 23 isolated OpenCode smoke scenarios and 42 isolated Chromium scenarios pass. Package verifier regression passes; the host-only dry-run has 64 entries and no reference-only files. |
+| CI | Pending; all-platform native and Safari build gates not run locally. |
+| Publish / GitHub Release | Pending. |
+| Registry | Pending publication and archive verification. |
+| Maintainer install | Post-commit step: apply only runtime removal and 0.16.0 versions to the mixed dev checkout, rebuild its reviewer and run `npm test`; preserve unrelated hc work. Final handoff records that result separately. |
+
+No live model continuation, daily-profile browser interaction or fresh Safari UI
+acceptance is implied by isolated smoke/browser checks.
+
 ## 0.15.0 — browser rounds and automatic connection — 2026-11-12
 
 The accepted browser work is isolated onto current public main, preserving the public
@@ -304,8 +326,7 @@ provenance was first exercised by 0.6.0 on 2026-10-22.
 
 1. Review the worktree. Run `npm run build:tui`, `npm run check:tui`, `npm run check`
    and `npm run test:smoke` for runtime changes.
-   Run `npm run test:references` when changing the server tools, history reader or `/ref`.
-2. Bump `package.json`, `package-lock.json` and the workspace version in `tui/Cargo.toml`.
+2. Bump `package.json`, `package-lock.json`, `browser/manifest.json` and the workspace version in `tui/Cargo.toml`.
    Refresh `tui/Cargo.lock` with Cargo, rebuild, and update `CHANGELOG.md`.
 3. Commit the exact release state and create its `v<version>` tag. Push the branch and tag.
 4. Watch `publish.yml`. Its reusable `native.yml` builds and tests the same tagged source
@@ -329,8 +350,8 @@ provenance was first exercised by 0.6.0 on 2026-10-22.
 
     Releases with the server entrypoint require a single entry in `opencode.json(c)`.
     Move a previous TUI-only entry from `cli.json`, preserving its options, so the same
-    package supplies both agent tools and TUI commands. To check a packed artifact locally,
-    extract it and run `ANNOTATE_PACKAGE_ROOT=<extracted-package> npm run test:references`.
+    package supplies configuration sync and TUI commands. Verify the packed allowlist
+    with `npm pack --dry-run` before publication.
 
 Never overwrite a published tag or version. If publication fails, diagnose the
 specific surface and retry only an idempotent step. Completion requires the source,

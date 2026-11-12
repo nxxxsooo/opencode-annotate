@@ -1,8 +1,6 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createReviewCommand } from "./review.mjs"
 import { createAsciiHold, createInputSource } from "./input-source.mjs"
-import { createReferenceCommand } from "./reference-command.mjs"
-import { promptReferenceComment } from "./reference-comment.tsx"
 import { createAutoReview } from "./auto-review.mjs"
 import { watchConfiguration } from "./configuration.mjs"
 import { installBridge } from "./scripts/install-bridge.mjs"
@@ -33,9 +31,6 @@ export default Plugin.define({
       stopAutoReview = createAutoReview(context, review)
     }
     restartAutoReview()
-    const reference = createReferenceCommand(context, {
-      review, promptComment: (options, signal) => promptReferenceComment(context, options, signal),
-    })
     // Permission prompts answer with single letters, which an input method swallows.
     const hold = createAsciiHold(inputSource)
     const stopAsked = context.data.on("permission.asked", event => hold.enter(event.data.id))
@@ -70,14 +65,6 @@ export default Plugin.define({
             palette: true,
             slash: { name: "annotate-selection", arguments: true },
             run: () => review.selection(),
-          }, {
-            id: "opencode-annotate.ref",
-            title: "Reference another conversation",
-            description: "Attach a past conversation with a comment or TUI annotations; --all searches across projects",
-            group: "Annotate",
-            palette: true,
-            slash: { name: "ref", arguments: true },
-            run: reference.run,
           }],
         }))
         return null
@@ -89,7 +76,6 @@ export default Plugin.define({
       configuration.dispose()
       stopAutoReview()
       review.dispose()
-      reference.dispose()
       unmount()
     }
   },

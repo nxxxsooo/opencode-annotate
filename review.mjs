@@ -10,7 +10,6 @@ import { wantsBrowser } from "./targets.mjs"
 import { prepareTheme } from "./theme.mjs"
 import { createInputSource } from "./input-source.mjs"
 import { resolveTuiBinary } from "./tui/binary.mjs"
-import { finishedAssistant } from "./session-reference.mjs"
 
 const execute = promisify(execFile)
 const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
@@ -52,6 +51,13 @@ async function documentSource(input, client, sessionID, signal) {
     if (signal.aborted) throw error
     throw new Error(`Can't read document "${filePath}": ${error.code === "ENOENT" ? "file not found." : error.message}`)
   }
+}
+
+// Interrupted turns retain the completed text visible in the transcript.
+export function finishedAssistant(message) {
+  if (message.type !== "assistant" || message.time.completed === undefined) return false
+  if (message.error?.type === "aborted") return true
+  return !message.error && message.finish !== "error"
 }
 
 export function selectReply(messages) {
@@ -189,15 +195,14 @@ export function createReviewCommand(context, options = {}) {
   // run, so keep the last one per session.
   context.renderer.on("selection", remember)
 
-  async function start(resolve, { automatic, home = false, sessionID: capturedSessionID, submission } = {}) {
+  async function start(resolve, { automatic, home = false, sessionID: capturedSessionID } = {}) {
     if (disposed) return
     if (automatic && (active || !automatic())) return
     if (active) return notice("An annotation is already in progress.")
     // Capture before the first await: changing tabs must never redirect a review.
     const route = context.ui.router.current()
     if (capturedSessionID === undefined && route.type !== "session" && !(home && route.type === "home")) return notice("Open a session first.")
-    // null: the submission creates its destination only after confirmation.
-    const sessionID = capturedSessionID === undefined ? (route.type === "session" ? route.sessionID : undefined) : capturedSessionID ?? undefined
+    const sessionID = capturedSessionID ?? (route.type === "session" ? route.sessionID : undefined)
     const controller = new AbortController()
     active = controller
     let directory
@@ -206,7 +211,7 @@ export function createReviewCommand(context, options = {}) {
       const source = await resolve({ sessionID, signal: controller.signal })
       if (controller.signal.aborted || !source) return
       if (automatic && !automatic()) return
-      const title = submission?.title ?? context.data.session.get(sessionID)?.title ?? sessionID
+      const title = context.data.session.get(sessionID)?.title ?? sessionID
 
       directory = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "opencode-annotate-"))
       keepDraft = true
@@ -286,17 +291,17 @@ export function createReviewCommand(context, options = {}) {
         : source.selection
           ? "Here are my annotations on text I selected in this session. Please address the feedback."
           : `Here are my annotations on your ${source.progress ? "progress update" : "reply"} ${source.id}. Please address the feedback.`
-      const text = submission ? submission.text(feedback) : `${subject}\n\n${feedback}`
+      const text = `${subject}\n\n${feedback}`
       const feedbackPath = path.join(directory, "feedback.md")
       await writeFile(feedbackPath, text, { mode: 0o600 })
       const count = (feedback.match(/^## Annotation /gm) ?? []).length
-      const skills = submission ? [] : await whatSkills(context.client, context.options.whatSkill, feedback, sessionID, controller.signal)
+      const skills = await whatSkills(context.client, context.options.whatSkill, feedback, sessionID, controller.signal)
       const intent = await readFile(intentPath, "utf8").catch(error => {
         if (error.code === "ENOENT") return ""
         throw error
       })
       // Pressing send in the TUI is the explicit confirmation; quitting asks here.
-      const confirmed = intent.trim() === "send" || await context.ui.dialog.confirm(submission?.confirm({ count, title }) ?? {
+      const confirmed = intent.trim() === "send" || await context.ui.dialog.confirm({
         title: "Send annotations?",
         message: `${source.filePath ? `Document: ${source.filePath}\n` : ""}Send ${count} ${count === 1 ? "annotation" : "annotations"} to "${title}" and let the assistant continue?`,
         label: { confirm: "Send and continue", cancel: "Cancel" },
@@ -306,10 +311,9 @@ export function createReviewCommand(context, options = {}) {
         keepDraft = archived > 0
         return notice(`Sending cancelled.${retainedArchive}`)
       }
-      if (submission) await submission.deliver({ sessionID, id: promptID, text })
-      else await context.client.session.prompt(feedbackInput({ sessionID, id: promptID, text, ...(skills.length ? { skills } : {}) }))
+      await context.client.session.prompt(feedbackInput({ sessionID, id: promptID, text, ...(skills.length ? { skills } : {}) }))
       keepDraft = archived > 0
-      const delivered = submission?.success?.(count) ?? `Sent ${count} ${count === 1 ? "annotation" : "annotations"}.`
+      const delivered = `Sent ${count} ${count === 1 ? "annotation" : "annotations"}.`
       notice(`${delivered}${retainedArchive}`, "success")
     } catch (error) {
       if (!disposed) {
@@ -380,10 +384,8 @@ export function createReviewCommand(context, options = {}) {
     return texts.find(text => compact(text.text).includes(needle)) ?? { text: selected, selection: true }
   })
 
-  const snapshot = (sessionID, source, submission) => start(async () => source, { sessionID, submission })
-
   return {
-    run, auto, pick, snapshot, selection: annotateSelection, webReady: web.ready,
+    run, auto, pick, selection: annotateSelection, webReady: web.ready,
     dispose() {
       context.renderer.off("selection", remember)
       disposed = true

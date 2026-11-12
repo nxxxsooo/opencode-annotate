@@ -6,7 +6,7 @@
 [![CI](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Website](https://mjshao.fun/opencode-annotate/) · [Install](#install) · [Workflows](#workflows) · [Browser review](#browser-review-optional) · [References](#reference-previous-conversations) · [Configuration](#configuration)
+[Website](https://mjshao.fun/opencode-annotate/) · [Install](#install) · [Workflows](#workflows) · [Browser review](#browser-review-optional) · [Configuration](#configuration)
 
 This **unofficial OpenCode plugin** bundles the native [terminal reviewer](tui/README.md) — no separate reviewer install is required. The optional [browser companion](#browser-review-optional) adds Chrome delivery and Safari copy-only review. Published on npm as `@nxxxsooo/opencode-annotate`.
 
@@ -92,20 +92,6 @@ Open the extension panel on any webpage and choose an automatically registered O
 
 Browser setup is separate from the plugin install. Safari supports local notes and copying only; see [Browser review](#browser-review-optional) below.
 
-### Reference previous conversations
-
-Run `/ref` to search and attach a past conversation with optional comments and inline annotations as one ordinary user prompt. Confirmation continues an established conversation; before your first message, references wait with `resume: false` for your next prompt.
-
-```text
-/ref                             # Choose a conversation from this project
-/ref authentication              # Search titles in this project
-/ref --all authentication        # Search titles across projects
-/ref --tui authentication        # Annotate the reference snapshot in the TUI
-/ref ses_…                       # Attach a specific conversation
-```
-
-Two Code Mode tools are registered for agent use: `annotate.session_search` and `annotate.session_read`.
-
 ## Command reference
 
 ```text
@@ -117,11 +103,6 @@ Two Code Mode tools are registered for agent use: `annotate.session_search` and 
 /annotate-selection               Review the message containing your last transcript selection
 /annotate page.html              Review local HTML in the configured browser
 /annotate https://example.com    Review the specified webpage
-/ref                             Choose a conversation from this project
-/ref authentication              Search conversation titles in this project
-/ref --all authentication        Search titles across projects
-/ref --tui authentication        Annotate the reference snapshot in the TUI
-/ref ses_…                       Attach a specific conversation
 ```
 
 Numbered `/annotate N`, `/annotate-last` and `/annotate-web` are retired. Use `/annotate-pick` for earlier text, `/annotate` for the latest reply, and `/annotate <url-or-html>` for a page. Browser connection controls live in the extension's destination menu.
@@ -130,40 +111,18 @@ Numbered `/annotate N`, `/annotate-last` and `/annotate-web` are retired. Use `/
 
 `opencode-annotate` replaces `opencode-plannotator-tui` (0.4.2 and earlier). To switch, run `opencode plugin remove opencode-plannotator-tui@latest` and then install this package as shown above.
 
-Move its entry from `cli.json` to `opencode.json(c)`, retaining the whole entry and any `options`. Keep one entry so the TUI is loaded once. A remaining CLI-only installation provides `/ref` and annotation commands, but cannot register the agent tools.
+Move its entry from `cli.json` to `opencode.json(c)`, retaining the whole entry and any `options`. Keep one entry so the TUI is loaded once and the server entry can synchronize options.
 
-## Reference another conversation
+## Upgrading to 0.16.0
 
-Run `/ref` or `/ref <title words>`, select the source, add an optional whole-reference comment, then choose **Attach and continue**. For inline marks, press **Ctrl+T** in the source chooser (or run `/ref --tui <title words>`) to annotate the snapshot in the existing TUI. The source snapshot, comment and annotations are submitted together as one ordinary user prompt, not a compact reference item. The confirmation names both conversations and shows whether the text is an excerpt. The source is attached to the session where you invoked `/ref`, even if you switch tabs.
+**Breaking:** `/ref` (including `--all` and `--tui`) and the agent session search/read
+tools have moved out of Annotate to Another. `another setup` installs Another's
+OpenCode integration with a cross-agent `/ref` in its next release. Until then, stay
+on Annotate 0.15.0 if you need `/ref`.
 
-The comment field grows as you type or paste, wraps long lines, and scrolls at a screen-aware height limit. **Shift+Enter** adds a line, **Enter** continues to confirmation, and **Esc** cancels without attaching anything. Confirming continues the conversation automatically (`delivery: "steer"`, `resume: true`): an idle assistant starts immediately, while a running assistant receives the reference and feedback at its next processing boundary. The quoted conversation remains historical source material.
-
-Before your first message, **Attach** adds the reference with `resume: false`, and the assistant reads it with the message you write next. Run `/ref` again to add more. On OpenCode home, `/ref` searches the home directory's project and creates the new session (same directory and model) only after you confirm, then opens it. Cancelling leaves no empty session.
-
-Search defaults to the current session's project, including its worktrees. `/ref --all` searches every project on the connected server. In the chooser, **Ctrl+A** switches between this project and all projects and reruns the same title query. The wide chooser gives titles the remaining space beside right-aligned, shortened directory tails; the confirmation retains the full directory. An exact `ses_…` ID selects that source directly, including a source in another project.
-
-The server part adds two Code Mode tools:
-
-- `annotate.session_search`: title search, with `query`, optional `allProjects`, `limit`
-  and `cursor`. It excludes the current conversation and child sessions. Repeat
-  `allProjects: true` when paging a cross-project search.
-- `annotate.session_read`: read by `sessionID`; pass `nextCursor` back as `cursor` for
-  older history. For a shortened message, pass its `messageID` and `nextOffset` as
-  `offset` to retrieve the rest.
-
-References include user text and completed assistant text, source IDs and timestamps. Tool payloads, reasoning, binary attachments and unfinished output are excluded. Each page contains at most 24,000 characters of message text, distributed across the messages; truncation and continuation are explicit. Historical claims may no longer match the code. Search matches titles, not words inside messages.
-
-**Server requirement:** the full-history read tool uses the official `opencode api` command because OpenCode 2.2's plugin context exposes only post-compaction context. The server must run as the managed OpenCode service with `opencode` on PATH. A process-ID check rejects a different discovered server. `/ref` uses the TUI's connected client directly.
-
-Permission actions are `annotate_session_search` (project ID, or `*` for cross-project search) and `annotate_session_read` (source session ID).
-
-<details>
-<summary id="reference-verification">Reference verification</summary>
-
-`npm run test:references` exercises the server tools and `/ref` against source or an extracted npm package. The checks cover pre-compaction history, API responses larger than 256 KiB, pagination, long-message continuation, attachment and cancellation. The fixture records the production `steer`/`resume` request, then forces `resume: false` to avoid a model turn. Unit checks also cover tab changes, permission denial and private-file cleanup.
-
-Recovery starts in `reference-command.mjs` for `/ref`, `session-tools.mjs` for agent tools, and `session-reference.mjs` for bounded history. `server-history.mjs` captures CLI output in private temporary files to avoid v2.2.0 pipe truncation, then removes them. Regression entrypoints are `session-reference.test.mjs`, `server-history.test.mjs` and `tests/references-smoke.py`; release ownership remains in [docs/releasing.md](docs/releasing.md).
-</details>
+Existing `opencode.json(c)` entries and plugin options keep working. Remove any
+`annotate_session_*` permission rules. Annotate continues to review replies,
+documents and webpages.
 
 ## Antigravity (AGY) support
 
@@ -362,7 +321,6 @@ npm run build:tui
 npm run check:tui
 npm run check
 npm run test:smoke
-npm run test:references
 ```
 
 Rust 1.96+ is needed to build from source. Unit tests use the bundled annotation/export binary, including theme inheritance tests. The optional smoke test also requires Python 3, tmux and OpenCode. It runs a detached terminal, verifies commands and feedback through the actual API, then removes its test session. Its submission uses `resume: false`, so it makes no model call or visible window.
@@ -382,7 +340,7 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - `/annotate 文档.md`：批注文档，支持中文、空格和相对路径。
 - `/annotate-pick`：从最近的回复和运行中的进度说明里选一条批注。
 - `/annotate-selection`：先在会话里拖选文字，再批注包含这段文字的消息。
-- `/ref`：选择并引用同项目的历史会话，可附整段评论；选择器中按 `Ctrl+A` 切换项目范围，按 `Ctrl+T` 打开 TUI 添加逐段批注；`/ref --all 关键词` 跨项目搜索；`/ref --tui 关键词` 直接进入 TUI 流程；`/ref ses_…` 直接指定。快照、评论和批注合并为一条普通用户提示，确认后继续对话；在首条消息之前（包括 OpenCode 首页，确认后才新建会话），只附加不启动助手，可多次引用后再开口。
+- 0.16.0 移除 `/ref` 和代理会话搜索／读取工具，交由 Another 提供跨代理引用。Another 下次发布后运行 `another setup` 安装集成；此前需要 `/ref` 的用户请保留 0.15.0。原有插件配置继续有效，请移除 `annotate_session_*` 权限规则。
 - `/annotate 页面.html`、`/annotate https://…`：打开网页批注。Chrome 自动注册主机和会话，扩展目的地菜单可筛选、新建空会话、断开及重连；Safari 保持仅复制。跨页备注汇成一轮，Send 与 Copy instead 分开，确认发送后自动继续原会话。
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 发送并返回。
 - 写批注中途按 `Ctrl+S`，一步保存、返回并发送（中文输入法开着也有效）；`Ctrl+C` 返回后由 OpenCode 询问。

@@ -192,6 +192,12 @@ Plain `/annotate`, `/annotate-pick` and `/annotate-selection` use the TUI; Markd
 
 ### Browser safeguards and limitations
 
+Picking and text selection work inside same-origin iframes, legacy framesets and
+nested frames. Reveal and page markers can find those notes after reload; delivered
+Markdown includes a `Frame:` line for frame context. Cross-origin frames cannot be
+picked and show a clear message. After updating to 0.16.1 (browser protocol 7), reload
+the Chrome extension and restart OpenCode.
+
 Written drafts autosave locally and restore after panel reload or a return to the same URL, including SPA routes. Selecting another target with unfinished feedback offers **Add/Save & switch**, **Keep editing**, or **Discard & switch**. Storage failures keep the input and offer a retry; competing panels require an explicit choice of draft. Saved-note revision checks likewise prevent stale tabs overwriting newer feedback. Full JSON/Markdown exports include redacted URLs, exact selected text/context, verified selector hints, styles and accessibility. Missing/changed/ambiguous targets are labeled in the sidebar instead of silently rebound. Comments and drafts live in extension-owned UI/storage; the page receives only selection metadata and numbered markers, not your written feedback.
 
 Native delivery requires an open local TUI and a connected destination. If the receiver closes, feedback stays pending. A failed batch retains its original target and ID for safe retry; if that session is permanently gone, export the notes before starting a new review. **Retry N notes & continue** retries that original batch; newly composed feedback stays local for the next send. Copying a round instead supersedes a failed batch. Clipboard failures expose a selectable preview and keep the round open. Browser-internal pages, PDF, cross-origin iframes, Canvas and remote SSH TUI clients are outside this version's scope. Page Context is retired only after exporting its drafts and verifying this replacement.

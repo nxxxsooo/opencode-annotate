@@ -1,5 +1,37 @@
 # Releasing
 
+## 0.16.1 candidate — picking inside frames — 2026-11-12
+
+Prepared from `fix/frame-pick` (`2b649b7`, `6be27ad`) on current public
+`origin/main` in the isolated `release/0.16.1` worktree. Acceptance basis:
+Mingjian, 2026-11-12, tested the fix on a real China Unicom router admin page
+and confirmed “可以用了”. The live development checkout is untouched.
+
+This patch fixes picking and text selection in same-origin iframes, legacy
+framesets and nested frames, restores reveal/markers after reload, and records
+frame context in delivered Markdown. Cross-origin frames show a clear message.
+Reload the Chrome extension and restart OpenCode after updating for protocol 7.
+
+| Surface | Verified state |
+|---|---|
+| Source | Local `release/0.16.1` candidate only; push, tag and publication are reserved for the maintainer. |
+| Local checks | `npm ci`, Cargo lock refresh, local 0.16.1 `build:tui`, formatting/Clippy and 403 Rust tests, `npm run check` (96 Node tests and a 64-entry host-only pack dry-run), all 23 isolated OpenCode smoke scenarios and all 50 isolated Chromium scenarios pass (Chromium on rerun). |
+| CI | Pending; cross-platform native and Safari build gates have not run for this candidate. |
+| Publish / GitHub Release | Pending; no tag, push or publication performed. |
+| Registry | Pending; no 0.16.1 archive verified. |
+| Maintainer install | Live `feat/hc-annotate` checkout left unchanged; installation verification remains pending. |
+
+Isolated checks do not establish live-model continuation, native side-panel
+behavior or fresh Safari UI acceptance. Only the locally built native target
+is verified before CI.
+
+The first Chromium run stopped at the existing connection-probe timing assertion
+(`opening the destination popover must wait for the in-flight probe`); an unchanged
+rerun passed the complete suite, including all frame and reinjection regressions.
+No test or runtime code was changed during release preparation.
+OpenCode smoke fixtures retain production continuation intent but force
+`resume: false` at the API boundary; no model turn was started.
+
 ## 0.16.0 — /ref moves to Another — 2026-11-12
 
 Prepared from public `origin/main` in the isolated `release/0.16.0` worktree.

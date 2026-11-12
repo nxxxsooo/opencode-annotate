@@ -10,16 +10,14 @@ routing, native messaging and captured-session feedback delivery.
   Safari requires an App-Sandboxed extension: its standalone panel copies local
   rounds out instead of delivering to sessions. Chrome keeps native delivery.
 - Native reviewer: `tui/`; build with `npm run build:tui`, verify with `npm run check:tui`.
-- Session references: `server.ts` registers tools through `session-tools.mjs`;
-  `reference-command.mjs` owns `/ref`; `session-reference.mjs` bounds and formats history.
-  `server-history.mjs` uses the authenticated CLI API with a same-server-process check.
+- Server entry: `server.ts` registers configuration so the single `opencode.json(c)`
+  entry continues to supply plugin options to the TUI on OpenCode 2.2.
 - `npm run check` uses the bundled executable. The TUI is ordinary owned source: no
   submodule, separate fork, upstream download or synchronization workflow.
 - `npm run test:smoke` additionally needs Python 3, tmux and OpenCode; it uses an
   isolated test session and never resumes a model turn.
-- `npm run test:references` verifies server tools and `/ref` in isolated sessions,
-  also without a model turn. Its fixture records production delivery intent, then
-  forces `resume: false` before calling the API.
+- Smoke fixtures record production delivery intent, then force `resume: false`
+  before calling the API.
 - Drive keys or mouse only in isolated test sessions, never the user's real sessions.
   Clicking a queued message moves it into the prompt, so a following Enter starts a model
   turn; select text elsewhere and check the prompt holds only the command before Enter.

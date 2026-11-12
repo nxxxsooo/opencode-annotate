@@ -1,6 +1,7 @@
 # Plan: move conversation references to Another
 
-Status: planned for the next release (Annotate 0.16.0), decided 2026-11-12.
+Status: Annotate 0.16.0 candidate prepared first, by Mingjian's decision on 2026-11-12.
+Push, tag and publication remain with Mingjian; Another's next release is not a gate.
 Feature work for Another is tracked in its own repository: `docs/ref-and-watch.md` on
 branch `feat/ref-menu` (reconciled 2026-11-12, commit `1be8a7a`; provider filter on
 Alt+P, one `opencode2-sessions` plugin for reference and session watching).
@@ -20,10 +21,11 @@ agent, not only OpenCode.
 
 ## Order of delivery
 
-1. **Another ships `/ref` first** (its next minor). Annotate stays unchanged until then,
-   so nobody loses the command.
-2. **Annotate 0.16.0 removes references** right after. Both releases go out the same day
-   to keep the window with two `/ref` commands short.
+1. **Annotate 0.16.0 ships first**, without waiting for Another's release. Mingjian
+   authorized this on 2026-11-12: “不用等啊，把这边做的都搞定，然后推送发布”.
+2. **Another ships its cross-agent `/ref` in its next release**; `another setup`
+   installs the OpenCode integration. Until then, users who need `/ref` should stay
+   on Annotate 0.15.0. The earlier Another-first ordering is superseded.
 
 ## Annotate 0.16.0 scope
 
@@ -65,7 +67,8 @@ agent, not only OpenCode.
 - Annotate: `npm run check`, `npm run test:smoke`, `npm run test:browser` pass; no
   reference file, tool or permission remains in the packed tarball; `/annotate` still
   reviews the latest completed reply; plugin options still reach the TUI.
-- Maintainer install: Another's `/ref` loaded and Annotate's gone, with no duplicate command.
+- Maintainer install: Annotate's `/ref` is gone and annotation remains functional.
+  Another's `/ref` installation is verified with its own next release, not an Annotate gate.
 
 ## Open risks
 

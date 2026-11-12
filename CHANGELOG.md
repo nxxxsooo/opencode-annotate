@@ -3,9 +3,8 @@
 ## 0.16.0 — /ref moves to Another
 
 - **Breaking:** remove `/ref`, `/ref --all`, `/ref --tui` and the agent session
-  search/read tools. Conversation references now belong to Another; `another setup`
-  installs its OpenCode integration with a cross-agent `/ref` in Another's next release.
-  Until that release, stay on Annotate 0.15.0 if you need `/ref`.
+  search/read tools. Conversation references now belong to Another; Another 0.28.0
+  ships a cross-agent `/ref`; install it and run `another setup`.
 - Existing `opencode.json(c)` plugin entries keep working, including option sync.
   Remove any `annotate_session_*` permission rules. Reply, document and webpage
   annotation remain in Annotate.

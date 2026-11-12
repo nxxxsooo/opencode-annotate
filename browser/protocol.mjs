@@ -1,7 +1,7 @@
 export const MAX_BYTES = 512 * 1024
 export const HOST = "fun.mjshao.annotate"
 // Bump when panel ↔ worker actions change. Chrome can keep an older worker running beside a newer panel.
-export const PROTOCOL = 6
+export const PROTOCOL = 7
 export function safeUrl(input) {
   const url = new URL(input)
   if (!["http:", "https:", "file:"].includes(url.protocol)) throw new Error("Unsupported page URL")
@@ -23,7 +23,7 @@ export function validateReview(review) {
         !["comment", "ask"].includes(note.kind) || typeof note.comment !== "string" || !note.comment.trim() || note.comment.length > 8000 ||
         typeof note.anchor?.quote !== "string" || note.anchor.quote.length > 4000 || typeof note.anchor.selector !== "string" ||
         !["text", "element"].includes(note.anchor.type)) throw new Error("Invalid annotation")
-    for (const key of ["prefix", "suffix", "styles", "accessibility", "element", "fullPath"]) {
+    for (const key of ["prefix", "suffix", "styles", "accessibility", "element", "fullPath", "frame"]) {
       if (note.anchor[key] !== undefined && typeof note.anchor[key] !== "string") throw new Error("Invalid anchor field")
     }
     if (typeof note.createdAt !== "string" || Number.isNaN(Date.parse(note.createdAt))) throw new Error("Invalid annotation timestamp")
@@ -55,6 +55,7 @@ export function markdown(review) {
     lines.push(`### Annotation ${index + 1} (${note.kind})`, `Captured: ${note.createdAt}`, `Selector hint: ${a.selector}`, `Element: ${a.element || a.type}`, "", "Page evidence:")
     lines.push(...`${a.prefix || ""}【${a.quote}】${a.suffix || ""}`.split("\n").map(line => `> ${line}`))
     if (a.fullPath) lines.push(`DOM path: ${a.fullPath}`)
+    if (a.frame) lines.push(`Frame: ${a.frame}`)
     if (a.rect) lines.push(`Position: ${JSON.stringify(a.rect)}; viewport: ${JSON.stringify(a.viewport)}`)
     if (a.styles) lines.push(`Styles: ${a.styles}`)
     if (a.accessibility) lines.push(`Accessibility: ${a.accessibility}`)

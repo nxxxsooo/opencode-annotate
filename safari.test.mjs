@@ -5,7 +5,7 @@ import { openPanel, panelWindowID, panelPolling, sameExtensionURL, sessionDelive
 
 test("Safari popup, worker and local round lifecycle stay isolated from native delivery", async () => {
   const previous = { chrome: globalThis.chrome, document: globalThis.document, location: globalThis.location }
-  const local = {}, session = {}, queries = [], windows = [], messages = []
+  const local = {}, session = {}, queries = [], windows = [], messages = [], scripts = []
   let receive, clicked, nativeCalls = 0, injections = 0, missing = false
   const storage = data => ({
     async get(key) { return structuredClone(key === null ? data : Object.fromEntries([key].filter(k => k in data).map(k => [k, data[k]]))) },
@@ -23,13 +23,16 @@ test("Safari popup, worker and local round lifecycle stay isolated from native d
     windows: { async create(options) { windows.push(options); return options } },
     tabs: {
       async query(query) { queries.push(query); return [{ id: query.windowId === 7 ? 42 : 999 }] },
-      async sendMessage(id, message) {
-        messages.push([id, message])
+      async sendMessage(id, message, options) {
+        messages.push([id, message, options])
         if (missing) throw new Error("Safari receiver unavailable")
         return message.action === "locate" ? { states: message.anchors.map(() => "located") } : { ok: true }
       },
     },
-    scripting: { async executeScript() { injections++; missing = false } },
+    scripting: { async executeScript(options) {
+      scripts.push(options); injections++; missing = false
+      return [{ frameId: 0, result: { frame: null } }, { frameId: 4, result: { frame: { selectors: ["#child"], url: "https://example.test/frame?token=private" } } }]
+    } },
   }
   try {
     assert.equal(sessionDelivery(), false)
@@ -73,9 +76,21 @@ test("Safari popup, worker and local round lifecycle stay isolated from native d
     assert.equal((await call("send", { targetID: "no" })).ok, false)
     assert.equal(nativeCalls, 0)
     missing = true
-    await call("current")
-    assert.equal(injections, 1)
-    assert.ok(messages.some(([, message]) => message.action === "annotate-ping"))
+    const before = injections
+    assert.equal((await call("current")).anchorStates[0], "located")
+    assert.equal(injections, before + 2)
+    assert.ok(scripts.every(options => options.target.allFrames === true))
+    assert.ok(messages.some(([, message, options]) => message.action === "pick" && options.frameId === 4))
+    const frame = JSON.stringify({ selectors: ["#child"], url: "https://example.test/frame?token=%5Bredacted%5D" })
+    const frameNote = { ...note, id: "frame-note", anchor: { ...note.anchor, frame } }
+    assert.equal((await call("save", { note: frameNote, baseRevision: 0 })).ok, true)
+    assert.equal((await call("reveal", { noteID: frameNote.id })).ok, true)
+    assert.equal(messages.at(-1)[2].frameId, 4)
+    assert.equal((await call("markers")).ok, true)
+    const frameMarkers = messages.findLast(([, message, options]) => message.action === "markers" && options.frameId === 4)
+    const ordered = (await call("current")).notes
+    assert.equal(frameMarkers[1].notes[ordered.findIndex(note => note.id === "note1")].anchor, null)
+    assert.equal(frameMarkers[1].notes[ordered.findIndex(note => note.id === frameNote.id)].anchor.frame, frame)
     assert.equal((await call("current", {}, { url: "https://example.test/" })).ok, false)
     assert.equal(typeof clicked, "function")
     chrome.runtime.getURL = file => `chrome-extension://abc/${file}`

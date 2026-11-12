@@ -38,6 +38,7 @@
     return parts.join(", ")
   }
   function selector(element) {
+    const document = element.ownerDocument
     const parts = []
     for (let node = element; node?.nodeType === 1; node = node.parentElement) {
       if (node.id && document.querySelectorAll(`#${CSS.escape(node.id)}`).length === 1) { parts.unshift(`#${CSS.escape(node.id)}`); break }
@@ -92,7 +93,8 @@
     if (!element) throw new Error("Choose a visible page element")
     const style = getComputedStyle(element)
     if (element.closest("[hidden],script,style,noscript,template") || style.display === "none" || style.visibility === "hidden") throw new Error("Choose a visible page element")
-    if (["iframe", "canvas", "embed", "object"].includes(element.localName)) throw new Error("This content type is unsupported")
+    if (["iframe", "frame"].includes(element.localName)) throw new Error("This frame is from another site; Annotate can't read it")
+    if (["canvas", "embed", "object"].includes(element.localName)) throw new Error("This content type is unsupported")
     const omitted = textFilter()
     const contents = document.createRange(); contents.selectNodeContents(element)
     const visibleText = safeText(contents, omitted).trim()
@@ -121,5 +123,13 @@
       rect: Object.fromEntries(["x", "y", "width", "height"].map(key => [key, Math.round(rect[key])])),
       viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY } }
   }
-  globalThis.AnnotateInspector = { capture, text: elementText }
+  function frame() {
+    const selectors = []
+    for (let current = window; current !== current.top; current = current.parent) {
+      // Access is deliberately limited to same-origin ancestors.
+      selectors.unshift(selector(current.frameElement))
+    }
+    return selectors.length ? { selectors, url: location.href } : null
+  }
+  globalThis.AnnotateInspector = { capture, text: elementText, frame }
 })();

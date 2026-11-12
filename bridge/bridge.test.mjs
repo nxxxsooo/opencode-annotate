@@ -32,6 +32,15 @@ test("v2 reviews carry validated pages per annotation and group the global round
     assert.throws(() => validateReview({ version: 2, annotations: [{ ...first, page }] }))
   }
 })
+test("frame anchors preserve their stable locator in the envelope and Markdown", () => {
+  const batch = review(), anchor = batch.annotations[0].anchor
+  assert.equal(markdown(batch).includes("Frame:"), false)
+  anchor.frame = JSON.stringify({ selectors: ["#outer", "frame:nth-of-type(2)"], url: safeUrl("https://example.test/frame?token=private") })
+  assert.equal(validateReview(batch).annotations[0].anchor.frame, anchor.frame)
+  assert.ok(markdown(batch).includes(`Frame: ${anchor.frame}`))
+  anchor.frame = { frameId: 42 }
+  assert.throws(() => validateReview(batch), /Invalid anchor field/)
+})
 test("interleaved page notes share contiguous display, marker and delivery ordering", () => {
   const first = review().annotations[0], other = { url: "https://example.test/other", title: "Other page" }
   const notes = [

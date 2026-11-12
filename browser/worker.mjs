@@ -13,29 +13,31 @@ const native = message => {
   return chrome.runtime.sendNativeMessage(HOST, message)
 }
 const KEPT_ROUNDS = 10
-const inject = tabId => chrome.scripting.executeScript({ target: { tabId }, files: ["inspector.js", "capture.js"] })
+// Inherited-origin blank/srcdoc documents have no HTTP URL to sanitize.
+const frameLocator = frame => frame ? JSON.stringify({ selectors: frame.selectors, url: ["about:blank", "about:srcdoc"].includes(frame.url) ? frame.url : safeUrl(frame.url) }) : undefined
+async function inject(tabId) {
+  try { await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["inspector.js", "capture.js"] }) }
+  catch (error) { throw new Error(String(error.message).includes("HTML") ? error.message : RECONNECT) }
+  const frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => {
+    try { return { frame: globalThis.AnnotateInspector.frame() } } catch { return null }
+  } })
+  return frames.filter(item => item.result).map(item => ({ frameId: item.frameId, frame: frameLocator(item.result.frame) }))
+}
+async function pickFrames(tabId, picking, frames = undefined) {
+  frames ??= await inject(tabId)
+  await Promise.all(frames.map(({ frameId }) => chrome.tabs.sendMessage(tabId, { action: "pick", picking }, { frameId })))
+  return { picking }
+}
+async function anchorMessage(tabId, message, frames = undefined) {
+  frames ??= await inject(tabId)
+  const frame = frames.find(item => item.frame === message.anchor?.frame)
+  if (!frame) return { ok: false, error: "This frame is missing or has navigated. Your feedback is kept." }
+  return chrome.tabs.sendMessage(tabId, message, { frameId: frame.frameId })
+}
 async function activate(tab) {
   if (!tab?.id || !/^(https?|file):/.test(tab.url || "")) throw new Error("Open an ordinary webpage or authorized local HTML")
   await inject(tab.id)
   await chrome.storage.session.set({ [`tab:${tab.id}`]: { page: { url: safeUrl(tab.url), title: pageTitle(tab.title || "") }, anchor: null } })
-}
-// A reload or navigation removes the page tools; reinject them while activeTab still grants this tab.
-// The receiver-missing wording differs per engine, so detect it by asking the tab instead.
-async function tabMessage(tabId, message) {
-  try { return await chrome.tabs.sendMessage(tabId, message) }
-  catch (error) {
-    if (!await receiverMissing(tabId)) throw error
-    try { await inject(tabId) } catch (injectError) {
-      throw new Error(String(injectError.message).includes("HTML") ? injectError.message : RECONNECT)
-    }
-    return chrome.tabs.sendMessage(tabId, message)
-  }
-}
-// Chrome reports a missing content script with a fixed string; Safari does not. Probe
-// the tab with a message only the content script answers.
-async function receiverMissing(tabId) {
-  try { await chrome.tabs.sendMessage(tabId, { action: "annotate-ping" }); return false }
-  catch { return true }
 }
 async function waitLoaded(tabID) {
   await new Promise((resolve, reject) => {
@@ -94,7 +96,13 @@ async function current(message) {
   let anchorStates = notes.map(note => note.page.url === state.page.url ? "unavailable" : "elsewhere"), draftAnchorState = draft.value ? "unavailable" : undefined, detached = null
   try {
     const anchors = localNotes.map(note => note.anchor).concat(draft.value ? [draft.value.anchor] : [])
-    const { states } = await tabMessage(tab.id, { action: "locate", anchors })
+    const frames = await inject(tab.id)
+    const latest = (await chrome.storage.session.get(`tab:${tab.id}`))[`tab:${tab.id}`]
+    await pickFrames(tab.id, !!latest?.picking, frames)
+    const states = await Promise.all(anchors.map(async anchor => {
+      const result = await anchorMessage(tab.id, { action: "locate", anchor, anchors: [anchor] }, frames)
+      return result.states?.[0] || "missing frame"
+    }))
     let index = 0
     anchorStates = notes.map(note => note.page.url === state.page.url ? states[index++] : "elsewhere")
     if (draft.value) draftAnchorState = states[localNotes.length]
@@ -162,12 +170,27 @@ async function liveTarget(paired, targets, current) {
   })
 }
 async function handle(message, sender) {
+  if (message.action === "frames-changed") {
+    if (!sender.tab) throw new Error("Invalid page source")
+    const state = (await chrome.storage.session.get(`tab:${sender.tab.id}`))[`tab:${sender.tab.id}`]
+    if (state?.page) await pickFrames(sender.tab.id, !!state.picking)
+    return {}
+  }
   if (message.action === "capture") {
     if (!sender.tab || !sender.url || new URL(message.page.url).origin !== new URL(sender.url).origin) throw new Error("Invalid page source")
     const key = `tab:${sender.tab.id}`
     const previous = (await chrome.storage.session.get(key))[key] || {}
-    await chrome.storage.session.set({ [key]: { ...previous, page: { url: safeUrl(message.page.url), title: pageTitle(message.page.title) }, picking: !!message.picking,
-      ...(!message.modeOnly ? { anchor: message.anchor, error: message.error, captureID: crypto.randomUUID() } : {}) } })
+    const tab = await chrome.tabs.get(sender.tab.id)
+    if ((sender.origin || new URL(sender.url).origin) !== new URL(tab.url).origin) throw new Error("Invalid frame source")
+    const frame = sender.frameId ? frameLocator(message.frame) : undefined
+    if (sender.frameId && !frame) throw new Error("Missing frame locator")
+    const captured = !message.modeOnly
+    const changedPage = previous.page?.url !== safeUrl(tab.url)
+    const picking = changedPage || captured ? false : message.ready ? !!previous.picking : !!message.picking
+    await chrome.storage.session.set({ [key]: { ...previous, page: { url: safeUrl(tab.url), title: pageTitle(tab.title || "") }, picking,
+      ...(captured ? { anchor: message.anchor ? { ...message.anchor, ...(frame ? { frame } : {}) } : null, error: message.error, captureID: crypto.randomUUID() } : changedPage ? { anchor: null, error: null } : message.error ? { error: message.error } : {}) } })
+    if (message.ready) await chrome.tabs.sendMessage(sender.tab.id, { action: "pick", picking }, { frameId: sender.frameId || 0 })
+    if (!picking && previous.picking) await pickFrames(sender.tab.id, false)
     return {}
   }
   if (sender.url && !sameExtensionURL(sender.url)) throw new Error("Only the extension panel can manage feedback")
@@ -237,7 +260,12 @@ async function handle(message, sender) {
   })
   const state = await current(message)
   if (["save", "pick"].includes(message.action) && message.url && message.url !== state.page.url) throw new Error("The active page changed; retry on the original page")
-  if (message.action === "pick") return tabMessage(state.tabID, { action: "pick" })
+  if (message.action === "pick") {
+    const picking = !state.picking
+    const key = `tab:${state.tabID}`, previous = (await chrome.storage.session.get(key))[key]
+    await chrome.storage.session.set({ [key]: { ...previous, picking } })
+    return pickFrames(state.tabID, picking)
+  }
   if (message.action === "reveal") {
     const note = state.notes.find(note => note.id === message.noteID)
     if (!note) throw new Error("This note is no longer on the page")
@@ -262,7 +290,10 @@ async function handle(message, sender) {
       try { await activate(await chrome.tabs.get(tabID)) }
       catch { throw new Error(RECONNECT) }
     }
-    const result = await tabMessage(tabID, { action: "reveal", anchor: note.anchor })
+    const key = `tab:${tabID}`, previous = (await chrome.storage.session.get(key))[key]
+    await chrome.storage.session.set({ [key]: { ...previous, picking: false } })
+    await pickFrames(tabID, false)
+    const result = await anchorMessage(tabID, { action: "reveal", anchor: note.anchor })
     if (!result.ok) throw new Error(result.error)
     return result
   }
@@ -295,7 +326,11 @@ async function handle(message, sender) {
     }
     await chrome.storage.local.set(updates); return { note, draft }
   })
-  if (message.action === "markers") return tabMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.page.url === state.page.url ? note.anchor : null })) })
+  if (message.action === "markers") {
+    const frames = await inject(state.tabID)
+    await Promise.all(frames.map(({ frameId, frame }) => chrome.tabs.sendMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.page.url === state.page.url && note.anchor.frame === frame ? note.anchor : null })) }, { frameId })))
+    return {}
+  }
   if (message.action === "copied") return serial(async () => {
     if (!Array.isArray(message.notes) || !message.notes.length) throw new Error("No copied feedback to record")
     const count = await closeRound(message.notes, { sentRound: crypto.randomUUID(), sentVia: "clipboard", sentTo: null })

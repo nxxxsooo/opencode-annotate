@@ -1,6 +1,6 @@
 (() => {
   if (globalThis.__opencodeAnnotate === true) throw new Error("Refresh this page once to update annotation tools. Saved notes will remain.")
-  globalThis.__opencodeAnnotate?.dispose()
+  if (globalThis.__opencodeAnnotate) return
   if (!["text/html", "application/xhtml+xml"].includes(document.contentType)) throw new Error("Only HTML pages are supported")
   const listeners = new AbortController()
   const on = (target, event, handler, options = {}) => target.addEventListener(event, handler, { ...options, signal: listeners.signal })
@@ -15,15 +15,17 @@
   const highlight = document.createElement("div"); highlight.className = "box"
   let highlighted, highlightTimer
   let picking = false, url = location.href, timer, markers = [], active = true
-  function send(anchor = null, error = null, modeOnly = false) {
+  function send(anchor = null, error = null, modeOnly = false, ready = false) {
     if (!active) return
     try {
-      chrome.runtime.sendMessage({ action: "capture", page: { url: location.href, title: document.title }, anchor, error, picking, modeOnly }).catch(dispose)
+      chrome.runtime.sendMessage({ action: "capture", page: { url: location.href, title: document.title }, frame: AnnotateInspector.frame(), anchor, error, picking, modeOnly, ready }).catch(dispose)
     } catch { dispose() }
   }
   function setPicking(value, notify = true) {
     picking = value
-    if (picking) root.append(box); else box.remove()
+    // Only a hover over a real element adds the box. Reapplying frame-wide
+    // picker state must not resurrect a box hidden at an iframe boundary.
+    if (!picking) box.remove()
     if (notify) send(null, null, true)
   }
   function selection() {
@@ -37,14 +39,29 @@
   }
   on(document, "selectionchange", () => { clearTimeout(timer); timer = setTimeout(selection, 160) })
   on(document, "pointerup", selection)
-  on(document, "mousemove", event => {
+  const hover = event => {
     if (!picking) return
+    if (["iframe", "frame", "frameset"].includes(event.target.localName)) {
+      box.remove()
+      if (event.target.localName !== "frameset") {
+        try { if (!event.target.contentDocument) throw new Error() }
+        catch { send(null, "This frame is from another site; Annotate can't read it", true) }
+      }
+      return
+    }
+    root.append(box)
     const rect = event.target.getBoundingClientRect()
     box.style.cssText = `left:${rect.x}px;top:${rect.y}px;width:${rect.width}px;height:${rect.height}px`
-  }, { capture: true })
+  }
+  on(document, "mousemove", hover, { capture: true })
+  on(document, "pointerover", hover, { capture: true })
   on(document, "pointerdown", event => { if (picking) { event.preventDefault(); event.stopImmediatePropagation() } }, { capture: true })
   on(document, "click", event => {
     if (!picking) return
+    if (event.target.localName === "frameset") return
+    if (["iframe", "frame"].includes(event.target.localName)) {
+      try { if (event.target.contentDocument) { box.remove(); return } } catch { /* inaccessible frame: explain below */ }
+    }
     event.preventDefault(); event.stopImmediatePropagation()
     // A failed pick must never leave the page trapped in interception mode.
     setPicking(false, false)
@@ -53,7 +70,7 @@
   on(document, "keydown", event => { if (picking && event.key === "Escape") setPicking(false) })
   const onMessage = (message, _sender, respond) => {
     if (message.action === "annotate-ping") { respond({ ok: true }); return }
-    if (message.action === "pick") { setPicking(!picking); respond({ ok: true, picking }) }
+    if (message.action === "pick") { setPicking(message.picking, false); respond({ ok: true, picking }) }
     if (message.action === "markers") { markers = message.notes || []; draw(); respond({ ok: true }) }
     if (message.action === "locate") respond({ states: message.anchors.map(locate) })
     if (message.action === "reveal") {
@@ -62,7 +79,7 @@
         respond({ ok: false, error: `This element is ${state}. Your feedback is kept.` })
         return
       }
-      setPicking(false)
+      setPicking(false, false)
       highlighted = document.querySelector(message.anchor.selector)
       highlighted.scrollIntoView({ block: "center", inline: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })
       root.append(highlight); draw()
@@ -104,7 +121,10 @@
   }
   on(document, "scroll", draw, { capture: true, passive: true }); on(window, "resize", draw)
   const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(draw, 160) })
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true })
+  on(document, "load", event => {
+    if (["iframe", "frame"].includes(event.target.localName)) chrome.runtime.sendMessage({ action: "frames-changed" }).catch(() => {})
+  }, { capture: true })
   const routeTimer = setInterval(() => { if (!active) { observer.disconnect(); return } if (url !== location.href) { url = location.href; markers = []; draw(); send() } }, 700)
   function dispose() {
     if (!active) return
@@ -113,5 +133,5 @@
     delete globalThis.__opencodeAnnotate
   }
   globalThis.__opencodeAnnotate = { dispose }
-  send()
+  send(null, null, true, true)
 })();

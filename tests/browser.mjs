@@ -829,6 +829,23 @@ try {
     const fixtureURL = new URL(`/frames/${fixture}`, url).href
     await page.goto(fixtureURL); await page.bringToFront(); await activate()
     await instrumentFrames()
+    if (fixture === "iframe") {
+      await worker.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+        await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
+          const previous = globalThis.__opencodeAnnotate, dispose = previous.dispose
+          delete previous.version
+          previous.dispose = () => { globalThis.__testReplaced = true; dispose() }
+        } })
+      })
+      await rpc({ action: "current" })
+      const upgraded = await worker.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === 7 })
+      })
+      assert.ok(upgraded.every(item => item.result))
+      passed.push("Pre-frame page tools are replaced once; subsequent injections preserve the current inspector")
+    }
     let inner = await page.locator(selector).contentFrame()
     if (depth === 2) inner = inner.locator("#child").contentFrame()
     await rpc({ action: "pick" })

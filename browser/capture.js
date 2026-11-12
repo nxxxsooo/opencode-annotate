@@ -1,6 +1,7 @@
 (() => {
   if (globalThis.__opencodeAnnotate === true) throw new Error("Refresh this page once to update annotation tools. Saved notes will remain.")
-  if (globalThis.__opencodeAnnotate) return
+  if (globalThis.__opencodeAnnotate?.version === 7) return
+  globalThis.__opencodeAnnotate?.dispose()
   if (!["text/html", "application/xhtml+xml"].includes(document.contentType)) throw new Error("Only HTML pages are supported")
   const listeners = new AbortController()
   const on = (target, event, handler, options = {}) => target.addEventListener(event, handler, { ...options, signal: listeners.signal })
@@ -132,6 +133,6 @@
     try { chrome.runtime.onMessage.removeListener(onMessage) } catch { /* previous extension context may already be invalidated */ }
     delete globalThis.__opencodeAnnotate
   }
-  globalThis.__opencodeAnnotate = { dispose }
+  globalThis.__opencodeAnnotate = { dispose, version: 7 }
   send(null, null, true, true)
 })();

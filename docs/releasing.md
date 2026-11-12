@@ -1,6 +1,6 @@
 # Releasing
 
-## 0.16.0 candidate — /ref moves to Another — 2026-11-12
+## 0.16.0 — /ref moves to Another — 2026-11-12
 
 Prepared from public `origin/main` in the isolated `release/0.16.0` worktree.
 Mingjian authorized Annotate to ship first without waiting for Another:
@@ -10,14 +10,14 @@ sync and existing `opencode.json(c)` entries remain valid. Remove obsolete
 `annotate_session_*` permission rules. Another's next release provides cross-agent
 `/ref` through `another setup`; stay on Annotate 0.15.0 until then if you need it.
 
-| Surface | Candidate state |
+| Surface | Verified state |
 |---|---|
-| Source | One local release commit; push, tag and publication reserved for Mingjian. |
+| Source | [PR #7](https://github.com/nxxxsooo/opencode-annotate/pull/7), source `50912a4`, merged/tagged commit `3daa6b59858bed0416d27c7a78a3519812f7fda2` (`v0.16.0`). |
 | Local checks | `npm ci`, `build:tui`, formatting/Clippy and 403 Rust tests, `npm run check` (95 Node tests and pack dry-run), 23 isolated OpenCode smoke scenarios and 42 isolated Chromium scenarios pass. Package verifier regression passes; the host-only dry-run has 64 entries and no reference-only files. |
-| CI | Pending; all-platform native and Safari build gates not run locally. |
-| Publish / GitHub Release | Pending. |
-| Registry | Pending publication and archive verification. |
-| Maintainer install | Post-commit step: apply only runtime removal and 0.16.0 versions to the mixed dev checkout, rebuild its reviewer and run `npm test`; preserve unrelated hc work. Final handoff records that result separately. |
+| CI | PR run `43189898806`, main run `43190629626` and publish run `43201511424` succeeded, including all five native targets, Safari's converter/Xcode gate and package checks. |
+| Publish / GitHub Release | npm `@nxxxsooo/opencode-annotate@0.16.0` is `latest` through trusted publishing; [GitHub Release v0.16.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.16.0) is public. |
+| Registry | Downloaded 0.16.0 archive has 68 entries, `gitHead` `3daa6b5`, package and extension version 0.16.0, all five native executables and no reference files. |
+| Maintainer install | `opencode plugin list` still resolves the development checkout; its reference files and session tools are removed, versions and rebuilt reviewer are 0.16.0, 164 Node tests pass, and unpublished hc work is preserved. `/ref` comes from the Another dev build. |
 
 No live model continuation, daily-profile browser interaction or fresh Safari UI
 acceptance is implied by isolated smoke/browser checks.

@@ -1,6 +1,6 @@
 # Releasing
 
-## 0.15.0 candidate — browser rounds and automatic connection — 2026-11-12
+## 0.15.0 — browser rounds and automatic connection — 2026-11-12
 
 The accepted browser work is isolated onto current public main, preserving the public
 README, demo assets, Safari build gates, toolbar images and 0.13.1/0.14.0 history.
@@ -16,14 +16,14 @@ build support was already released in 0.12.0 and is preserved, not listed as new
 No local settings, artwork, credentials or private captures are included. Reload the
 unpacked Chrome extension after updating so panel, worker and envelope versions match.
 
-| Surface | Candidate state |
+| Surface | Verified state |
 |---|---|
-| Source | Local `release/0.15.0` branch based on public main `eaeaf75`; no push or tag authorized in this preparation. |
+| Source | [PR #6](https://github.com/nxxxsooo/opencode-annotate/pull/6), source `f6d9333`, merged/tagged commit `5d2420ea5b3a61266a1ce60240ebccc827c1c712` (`v0.15.0`). Shipped after Mingjian tested the dev build and accepted it (“可以了”). |
 | Local checks | `npm ci`, local 0.15.0 `build:tui`, formatting/Clippy and all 403 Rust tests, `npm run check` (114 Node tests and package dry-run), all 42 isolated Chromium scenarios, all 23 isolated OpenCode smoke scenarios and reference smoke pass on OpenCode 2.2.7. |
-| CI | Pending; five native targets and Safari converter/Xcode gate have not run for this candidate. |
-| Publish / GitHub Release | Pending; no tag, publication or Release created. |
-| Registry | Pending; 0.15.0 archive, integrity, provenance and published-package checks remain to be verified after publication. |
-| Maintainer install | Unchanged; still the mixed development checkout. No global configuration or installed Safari app changed. |
+| CI | PR run `43149482867`, main run `43149942056` and publish run `43150524663` succeeded, including all five native targets, Safari's converter/Xcode gate and package checks. |
+| Publish / GitHub Release | npm `@nxxxsooo/opencode-annotate@0.15.0` is `latest`, published through trusted publishing with provenance; [GitHub Release v0.15.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.15.0) is public. |
+| Registry | Downloaded 0.15.0 archive has 73 entries, `gitHead` `5d2420e`, package and extension version 0.15.0, protocol 6 and all five native executables. |
+| Maintainer install | `opencode plugin list` still resolves the development checkout. Its version fields and rebuilt native reviewer are 0.15.0 and its 183 Node tests pass; unpublished hc work is preserved there. No global configuration or installed Safari app changed. |
 
 Smoke fixtures record production `steer` / `resume: true` intent and force
 `resume: false` at the API boundary; they do not prove live-model continuation.

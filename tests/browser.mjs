@@ -15,7 +15,17 @@ const artifacts = path.join(project, ".local/browser-test")
 await mkdir(artifacts, { recursive: true })
 const temp = await mkdtemp(path.join(os.homedir(), ".cache/oa-browser-"))
 const html = `<!doctype html><html lang=en><meta charset=utf-8><title>\u200bAnnotate\u2060 review\ufeff fixture\u200d</title><style>body{font:18px/1.8 system-ui;padding:40px;max-width:700px}button{padding:12px}p{margin:24px 0}.css-hidden{display:none}</style><h1>Review a live webpage</h1><p id=duplicate>First: same text, context A. Second: same text, context B.</p><p id=unicode>Before 😀 <b>中文选区</b> after 🚀.</p><button id=target onclick="window.clicked=(window.clicked||0)+1">Run the workflow</button><p><span contenteditable>never-export-before</span><span id=public>Public text</span><span contenteditable>never-export-after</span></p><input id=password type=password value=never-export-password><section id=dashboard><h2>月度复盘</h2><p>Track attendance</p><button id=gear aria-label=Settings><svg aria-hidden=true width=24 height=24><title>never-export-icon</title><circle cx=12 cy=12 r=10 /></svg></button><input type=hidden value=never-export-hidden><textarea hidden>never-export-textarea</textarea><span class=css-hidden>never-export-css</span><div contenteditable>never-export-editor</div></section><canvas id=canvas width=50 height=20></canvas>`
-const server = createServer((_request, response) => { response.setHeader("content-type", "text/html"); response.end(html) })
+const foreignServer = createServer((_request, response) => { response.setHeader("content-type", "text/html"); response.end('<p id="foreign">Foreign site text</p>') })
+await new Promise(resolve => foreignServer.listen(0, "127.0.0.1", resolve))
+const foreignURL = `http://127.0.0.1:${foreignServer.address().port}/foreign`
+const fixtures = {
+  "/frames/iframe": '<!doctype html><title>Iframe fixture</title><iframe id="child" src="/frames/inner" style="width:700px;height:400px"></iframe>',
+  "/frames/legacy": '<!doctype html><html><head><title>Legacy fixture</title></head><frameset cols="50%,50%"><frame id="left" src="/frames/inner?left"><frame id="right" src="/frames/inner?right"></frameset></html>',
+  "/frames/nested": '<!doctype html><title>Nested fixture</title><iframe id="outer" src="/frames/iframe" style="width:900px;height:600px"></iframe>',
+  "/frames/foreign": `<!doctype html><title>Foreign fixture</title><iframe id="foreign" src="${foreignURL}" style="width:700px;height:400px"></iframe>`,
+  "/frames/inner": '<!doctype html><title>Inner document</title><style>body{padding:30px}p{padding:20px}</style><p id="inside">Inner frame selectable text</p>',
+}
+const server = createServer((request, response) => { response.setHeader("content-type", "text/html"); response.end(fixtures[request.url.split("?")[0]] || html) })
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
 const url = `http://127.0.0.1:${server.address().port}/fixture`
 const targetsDirectory = path.join(temp, "targets")
@@ -787,6 +797,146 @@ try {
   assert.deepEqual([...interleavedMarkdown.matchAll(/^### Annotation (\d+)/gm)].map(match => Number(match[1])), [1, 2, 3])
   assert.ok(interleavedMarkdown.indexOf("Page A later feedback") < interleavedMarkdown.indexOf("Page B edited from page A"))
   passed.push("Interleaved A→B→A notes use contiguous page-group numbering in worker state, panel and Markdown")
+  // Frame regression suite uses only this isolated profile. Capture closed shadow
+  // roots in the extension's isolated world to assert the actual highlight/pins.
+  const rpc = message => panel.evaluate(message => chrome.runtime.sendMessage(message), message)
+  await worker.evaluate(async () => {
+    const keys = Object.keys(await chrome.storage.local.get(null)).filter(key => /^(note:|draft:|outbox$)/.test(key))
+    await chrome.storage.local.remove(keys)
+  })
+  const instrumentFrames = async () => {
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+      await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
+        globalThis.__opencodeAnnotate?.dispose()
+        if (!globalThis.__testAttachShadow) {
+          globalThis.__testAttachShadow = Element.prototype.attachShadow
+          Element.prototype.attachShadow = function(options) { const root = globalThis.__testAttachShadow.call(this, options); if (this.hasAttribute("data-opencode-annotate")) globalThis.__testRoot = root; return root }
+        }
+      } })
+    })
+    assert.equal((await rpc({ action: "current" })).ok, true)
+  }
+  const frameVisuals = () => worker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+    return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => ({
+      url: location.href, boxes: [...(globalThis.__testRoot?.querySelectorAll(".box") || [])].map(node => node.style.cssText),
+      pins: [...(globalThis.__testRoot?.querySelectorAll(".pin") || [])].map(node => node.textContent),
+    }) })
+  })
+  const frameNoteIDs = []
+  for (const [fixture, selector, depth] of [["iframe", "#child", 1], ["legacy", "#right", 1], ["nested", "#outer", 2]]) {
+    const fixtureURL = new URL(`/frames/${fixture}`, url).href
+    await page.goto(fixtureURL); await page.bringToFront(); await activate()
+    await instrumentFrames()
+    if (fixture === "iframe") {
+      await worker.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+        await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
+          const previous = globalThis.__opencodeAnnotate, dispose = previous.dispose
+          delete previous.version
+          previous.dispose = () => { globalThis.__testReplaced = true; dispose() }
+        } })
+      })
+      await rpc({ action: "current" })
+      const upgraded = await worker.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === 7 })
+      })
+      assert.ok(upgraded.every(item => item.result))
+      passed.push("Pre-frame page tools are replaced once; subsequent injections preserve the current inspector")
+    }
+    let inner = await page.locator(selector).contentFrame()
+    if (depth === 2) inner = inner.locator("#child").contentFrame()
+    await rpc({ action: "pick" })
+    await inner.locator("#inside").hover()
+    const visuals = await frameVisuals()
+    const innerBoxes = visuals.filter(item => item.result.url.includes("/frames/inner")).flatMap(item => item.result.boxes)
+    assert.ok(innerBoxes.some(style => style.includes("width:")), JSON.stringify(visuals))
+    assert.ok(visuals.filter(item => !item.result.url.includes("/frames/inner")).every(item => !item.result.boxes.some(style => style.includes("width:"))), "outer frames must not highlight frame elements")
+    await inner.locator("#inside").click()
+    await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).anchor?.selector === "#inside")
+    let captured = await rpc({ action: "current" })
+    assert.equal(captured.page.url, fixtureURL)
+    assert.equal(JSON.parse(captured.anchor.frame).selectors.length, depth)
+    assert.equal(captured.picking, false)
+    if (fixture === "iframe") {
+      await panel.getByLabel("Your feedback").fill("Keep this frame draft")
+      await panel.locator("#draft-state").filter({ hasText: "Draft saved locally" }).waitFor()
+      await panel.reload()
+      await panel.waitForFunction(() => document.querySelector("#comment").value === "Keep this frame draft")
+      const restored = await rpc({ action: "current" })
+      assert.equal(restored.draft.value.anchor.frame, captured.anchor.frame)
+      assert.equal(restored.draftAnchorState, "located")
+      await panel.getByRole("button", { name: "Discard draft", exact: true }).click()
+    }
+    const saveCapture = async (anchor, suffix) => {
+      const note = { id: `frame-${fixture}-${suffix}`, page: captured.page, anchor, revision: 1, kind: "comment", comment: `Review ${fixture} ${suffix}`, createdAt: new Date().toISOString() }
+      const result = await rpc({ action: "save", note, baseRevision: 0 })
+      assert.equal(result.ok, true, JSON.stringify(result)); frameNoteIDs.push(note.id)
+    }
+    await saveCapture(captured.anchor, "element")
+    await inner.locator("#inside").evaluate(node => { const range = document.createRange(); range.selectNodeContents(node); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); document.dispatchEvent(new Event("pointerup")) })
+    await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).anchor?.type === "text")
+    captured = await rpc({ action: "current" })
+    await saveCapture(captured.anchor, "text")
+    await page.reload(); await instrumentFrames()
+    const reloaded = await rpc({ action: "current" })
+    assert.ok(reloaded.anchorStates.slice(-2).every(state => state === "located"), JSON.stringify(reloaded.anchorStates))
+    assert.equal((await rpc({ action: "reveal", noteID: frameNoteIDs.at(-1) })).ok, true)
+    assert.equal((await rpc({ action: "markers" })).ok, true)
+    const markers = await frameVisuals()
+    const innerPins = markers.filter(item => item.result.url.includes("/frames/inner")).flatMap(item => item.result.pins)
+    assert.deepEqual(innerPins, [String(frameNoteIDs.length - 1), String(frameNoteIDs.length)])
+    assert.ok(markers.filter(item => !item.result.url.includes("/frames/inner")).every(item => item.result.pins.length === 0))
+    passed.push(`${fixture}: inner hover, element/text notes, top-page ownership, reload-safe reveal and globally numbered frame markers`)
+  }
+  // A late-loading/navigating child inherits the active picker without a new grant.
+  await rpc({ action: "pick" })
+  await page.locator("#outer").evaluate(node => { node.src = "/frames/inner?late" })
+  const late = page.frameLocator("#outer").locator("#inside")
+  await late.waitFor(); await late.hover()
+  await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).picking)
+  await late.press("Escape")
+  await panel.waitForFunction(async () => !(await chrome.runtime.sendMessage({ action: "current" })).picking)
+  assert.deepEqual((await rpc({ action: "current" })).anchorStates.slice(-2), ["missing frame", "missing frame"])
+  const navigatedReveal = await rpc({ action: "reveal", noteID: frameNoteIDs.at(-1) })
+  assert.equal(navigatedReveal.ok, false)
+  assert.match(navigatedReveal.error, /frame is missing or has navigated/)
+  passed.push("A navigating child inherits picking, and Escape in that child cancels every frame")
+  await page.locator("#outer").evaluate(node => { node.srcdoc = '<p id="blank-child">Inherited origin text</p>' })
+  const inherited = page.frameLocator("#outer").locator("#blank-child")
+  await inherited.waitFor()
+  await rpc({ action: "pick" })
+  await inherited.click()
+  await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).anchor?.selector === "#blank-child")
+  assert.equal(JSON.parse((await rpc({ action: "current" })).anchor.frame).url, "about:srcdoc")
+  passed.push("Inherited-origin srcdoc frames remain accessible and retain a stable frame locator")
+  await page.goto(new URL("/frames/foreign", url).href); await activate(); await instrumentFrames()
+  await rpc({ action: "pick" })
+  await page.locator("#foreign").hover({ position: { x: 1, y: 1 } })
+  await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).error === "This frame is from another site; Annotate can't read it")
+  await panel.locator("#page-error").filter({ hasText: "This frame is from another site; Annotate can't read it" }).waitFor()
+  assert.ok((await frameVisuals()).filter(item => item.frameId === 0).every(item => item.result.boxes.length === 0))
+  await rpc({ action: "pick" })
+  passed.push("An inaccessible cross-origin frame shows a specific explanation instead of a whole-frame highlight")
+  const frameDeliveries = []
+  const frameReceiver = await createReceiver({ root: targetsDirectory, sessionID: "ses_frames", title: "Frame tests", directory: "/isolated-test", resume: false,
+    client: { session: { get: async () => ({}), prompt: async input => { frameDeliveries.push(input); return { id: input.id } } } } })
+  additionalReceivers.push(frameReceiver)
+  assert.equal((await rpc({ action: "pair", target: frameReceiver.target })).ok, true)
+  assert.equal((await rpc({ action: "send", targetID: frameReceiver.target.id })).ok, true)
+  assert.equal((frameDeliveries[0].text.match(/^Frame: /gm) || []).length, 6)
+  const frameRound = await rpc({ action: "current" })
+  await rpc({ action: "restore-round", roundID: frameRound.lastRound.id })
+  await panel.reload()
+  await panel.evaluate(() => { navigator.clipboard.writeText = async text => { window.frameCopy = text } })
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 6)
+  await panel.getByRole("button", { name: "More review options", exact: true }).click()
+  await panel.getByRole("button", { name: "Copy Markdown", exact: true }).click()
+  await panel.waitForFunction(() => !!window.frameCopy)
+  assert.equal(((await panel.evaluate(() => window.frameCopy)).match(/^Frame: /gm) || []).length, 6)
+  passed.push("Native Send and Copy Markdown both preserve all frame locator lines across a multi-page round")
   await panel.evaluate(() => {
     const send = chrome.runtime.sendMessage.bind(chrome.runtime)
     chrome.runtime.sendMessage = async message => {
@@ -808,5 +958,5 @@ try {
   if (panel) console.error(JSON.stringify({ passed, ui: await panel.locator("body").innerText(), state: await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" })) }, null, 2))
   throw error
 } finally {
-  await context?.close(); await receiver?.close(); await Promise.all(additionalReceivers.map(receiver => receiver.close())); await new Promise(resolve => server.close(resolve)); await rm(temp, { recursive: true, force: true })
+  await context?.close(); await receiver?.close(); await Promise.all(additionalReceivers.map(receiver => receiver.close())); await new Promise(resolve => server.close(resolve)); await new Promise(resolve => foreignServer.close(resolve)); await rm(temp, { recursive: true, force: true })
 }

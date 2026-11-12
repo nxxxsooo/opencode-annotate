@@ -74,7 +74,7 @@ function dirty(m = model) {
     anchorIdentity(value.anchor) !== anchorIdentity(value.editing.anchor) : !!value.comment.trim()
 }
 const validDraft = () => !!model?.value?.comment.trim() && dirty()
-const anchorIdentity = anchor => anchor ? JSON.stringify([anchor.type, anchor.selector, anchor.quote, anchor.prefix, anchor.suffix]) : ""
+const anchorIdentity = anchor => anchor ? JSON.stringify([anchor.frame, anchor.type, anchor.selector, anchor.quote, anchor.prefix, anchor.suffix]) : ""
 function pendingCount() {
   const pending = state?.notes.filter(note => note.sentRevision !== note.revision) || []
   return pending.length + (validDraft() && !pending.some(note => note.id === model.value.editing?.id) ? 1 : 0)

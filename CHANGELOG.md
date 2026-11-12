@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.1 — picking inside frames
+
+- Fix picking and text selection inside same-origin iframes, legacy framesets and
+  nested frames. Reveal and page markers find notes in frames after a reload.
+- Record each note's frame in a `Frame:` line in delivered Markdown. Cross-origin
+  frames show a clear message instead of silently failing to pick.
+- Browser protocol 7 requires matching companion files: reload the Chrome extension
+  and restart OpenCode after updating.
+
 ## 0.16.0 — /ref moves to Another
 
 - **Breaking:** remove `/ref`, `/ref --all`, `/ref --tui` and the agent session

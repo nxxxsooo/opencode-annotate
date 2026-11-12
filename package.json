@@ -1,6 +1,6 @@
 {
   "name": "@nxxxsooo/opencode-annotate",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Unofficial OpenCode annotation plugin: review AI replies and Markdown with a bundled terminal reviewer; annotate webpages with the browser companion.",
   "license": "MIT",
   "type": "module",

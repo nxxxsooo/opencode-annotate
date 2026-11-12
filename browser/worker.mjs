@@ -49,6 +49,17 @@ async function waitLoaded(tabID) {
   })
 }
 const delivered = note => !note.deleted && note.sentRevision === note.revision
+async function updateMarkers(notes) {
+  const session = await chrome.storage.session.get(null)
+  await Promise.all((await chrome.tabs.query({})).map(async tab => {
+    const page = session[`tab:${tab.id}`]?.page
+    if (!page) return
+    try {
+      const frames = await inject(tab.id)
+      await Promise.all(frames.map(({ frameId, frame }) => chrome.tabs.sendMessage(tab.id, { action: "markers", notes: notes.map(note => ({ anchor: note.page.url === page.url && note.anchor.frame === frame ? note.anchor : null })) }, { frameId })))
+    } catch { /* Closed or navigated tabs are refreshed when reopened. */ }
+  }))
+}
 async function closeRound(annotations, details) {
   const storage = await chrome.storage.local.get(null), sentAt = new Date().toISOString(), updates = {}
   for (const sent of annotations) {
@@ -108,7 +119,7 @@ async function current(message) {
     if (draft.value) draftAnchorState = states[localNotes.length]
   } catch (error) { if (error.message === RECONNECT) detached = RECONNECT /* otherwise visibly unavailable while navigating */ }
   return { protocol: PROTOCOL, tabID: tab.id, ...state, notes, anchorStates, hash, draft, draftAnchorState, detached, lastRound: lastRound(entries),
-    outbox: outbox ? { targetID: outbox.targetID, count: outbox.review.annotations.length } : null }
+    outbox: outbox ? { batchID: outbox.batchID, targetID: outbox.targetID, count: outbox.review.annotations.length } : null }
 }
 function draftConflict(draft) {
   return Object.assign(new Error("This draft changed in another panel. Choose which version to keep."), { code: "draft-conflict", draft })
@@ -297,6 +308,30 @@ async function handle(message, sender) {
     if (!result.ok) throw new Error(result.error)
     return result
   }
+  if (["clear", "restore-notes"].includes(message.action)) return serial(async () => {
+    if (!Array.isArray(message.notes) || !message.notes.length) throw new Error("No notes to change")
+    const storage = await chrome.storage.local.get(null), updates = {}, restoring = message.action === "restore-notes"
+    for (const ref of message.notes) {
+      const key = `note:${await pageKey(safeUrl(ref.url))}:${ref.id}`, old = storage[key]
+      if (!old || old.revision !== ref.revision || !!old.deleted !== restoring || delivered(old))
+        throw Object.assign(new Error("A note changed in another tab. Refresh and try again."), { code: "note-conflict", note: old || null })
+      if (updates[key]) throw new Error("Duplicate note")
+      updates[key] = { ...old, revision: old.revision + 1, deleted: !restoring }
+    }
+    if (restoring) {
+      const round = Object.entries(storage).filter(([key, note]) => key.startsWith("note:") && !note.deleted && !delivered(note)).map(([, note]) => note)
+      if (round.length + Object.keys(updates).length > 200) throw new Error("This round would exceed 200 notes; send or remove some first")
+      validateReview({ version: 2, annotations: [...round, ...Object.values(updates)] })
+    }
+    const notes = Object.values(updates)
+    if (!restoring && message.wholeRound && storage.outbox) {
+      if (message.dropBatchID !== storage.outbox.batchID) throw new Error("A pending retry batch will be dropped. Confirm Clear again.")
+      updates.outbox = null
+    }
+    await chrome.storage.local.set(updates)
+    await updateMarkers(orderedNotes(Object.entries({ ...storage, ...updates }).filter(([key, note]) => key.startsWith("note:") && !note.deleted && !delivered(note)).map(([, note]) => note)))
+    return { notes }
+  })
   if (["save", "delete", "restore"].includes(message.action)) return serial(async () => {
     const page = message.note.page || state.page
     const key = `note:${await pageKey(page.url)}:${message.note.id}`

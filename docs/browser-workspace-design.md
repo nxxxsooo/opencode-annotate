@@ -11,6 +11,13 @@ Show on page reuses an exact-URL tab (current window first), otherwise navigates
 active tab and reveals after loading. Edit first opens the note's page; Delete/Undo
 remain available from any page. Drafts and draft-conflict handling stay page-local.
 
+Clear beside the round count removes all saved unsent notes; each page heading also
+offers a quiet Clear for that page. Both use revision-checked tombstones and one
+batch Undo, preserve every page's draft, and leave delivered history/Restore last
+round untouched. Whole-round Clear requires inline confirmation if it will drop a
+pending retry batch; Undo restores notes, not that retry snapshot. Page Clear leaves
+the retry snapshot untouched. Protocol 8 adds atomic clear/restore-notes actions.
+
 Send/Copy close one global round and deliver per-page Markdown sections in one message.
 The outbox, 200-note/512 KiB bounds, latest-round recovery, and ten-round retention
 are global. Protocol 6 uses only review envelope v2: each annotation carries its own

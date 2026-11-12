@@ -6,4 +6,6 @@ Based on Asim Sayed's MIT-licensed [Annotate HTML](https://github.com/AsimSayed/
 
 `inspector.js` adapts the original element identification, computed-style snapshot, and accessibility collectors. This local enhancement replaces the in-page comment popup and volatile state with an extension-origin side panel, durable per-note storage, exact range context and validated selectors. It adds complete export and opt-in paired session delivery. The original upstream implementation is not injected alongside the enhanced runtime.
 
-This is a distinct local extension with its own ID, not an official Annotate HTML update. It has no upstream update URL, analytics or external data service. Only user-requested Native Messaging can send feedback to a paired local OpenCode client. Native Messaging and side-panel installation are macOS/Chrome-only in this version.
+This is a distinct local extension with its own ID, not an official Annotate HTML update. It has no upstream update URL, analytics or external data service. Only user-requested Native Messaging can send feedback to a paired local OpenCode client.
+
+This version runs in Chrome and Safari. Chrome uses its native messaging host and a docked side panel. Safari has no docked panel, and it only registers an App-Sandboxed app extension, which cannot reach the local Node bridge. The Safari build therefore keeps notes local and copies rounds out, and the panel opens as its own window. Chrome keeps Native Messaging and session delivery. Both browsers are macOS-only in this version.

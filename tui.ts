@@ -5,6 +5,7 @@ import { createReferenceCommand } from "./reference-command.mjs"
 import { promptReferenceComment } from "./reference-comment.tsx"
 import { createAutoReview } from "./auto-review.mjs"
 import { watchConfiguration } from "./configuration.mjs"
+import { installBridge } from "./scripts/install-bridge.mjs"
 
 export default Plugin.define({
   id: "opencode-annotate",
@@ -17,12 +18,16 @@ export default Plugin.define({
     const configuration = watchConfiguration(context, updated => {
       const changed = options.autoAnnotate !== updated.autoAnnotate
         || options.autoAnnotateThreshold !== updated.autoAnnotateThreshold
+        || options.browser !== updated.browser
       options = updated
       if (changed) restartAutoReview?.()
     })
     await configuration.ready
+    if (process.platform === "darwin") void installBridge().catch(error => {
+      context.ui.toast.show({ title: "Annotate", message: `Browser auto-setup failed: ${error.message}. Run npm run install:bridge to repair it.`, variant: "error", duration: 15000 })
+    })
     const inputSource = createInputSource(context.options.inputSource)
-    const review = createReviewCommand(context, { inputSource, web: { browser: options.browser } })
+    const review = createReviewCommand(context, { inputSource, web: { autoRegister: true, browser: options.browser } })
     restartAutoReview = () => {
       stopAutoReview()
       stopAutoReview = createAutoReview(context, review)
@@ -43,22 +48,12 @@ export default Plugin.define({
           mode: "global",
           commands: [{
             id: "opencode-annotate.annotate",
-            title: "Annotate reply or document",
-            description: "The latest completed reply, or a Markdown/text file path",
+            title: "Annotate reply, document or webpage",
+            description: "The latest completed reply, a file path, or a webpage URL",
             group: "Annotate",
             palette: true,
             slash: { name: "annotate", arguments: true },
             run: review.run,
-          }, {
-            id: "opencode-annotate.annotate-last",
-            title: "Annotate last reply (TUI)",
-            description: "Annotate the latest completed reply; q sends and returns",
-            group: "Annotate",
-            palette: true,
-            // Keep slash submission with a trailing space local to the command.
-            // Any supplied argument is deliberately ignored: this always means latest.
-            slash: { name: "annotate-last", arguments: true },
-            run: () => review.run(),
           }, {
             id: "opencode-annotate.annotate-pick",
             title: "Annotate earlier text (TUI)",
@@ -75,14 +70,6 @@ export default Plugin.define({
             palette: true,
             slash: { name: "annotate-selection", arguments: true },
             run: () => review.selection(),
-          }, {
-            id: "opencode-annotate.annotate-web",
-            title: "Annotate webpage (browser)",
-            description: "Pair Chrome (creates a session if needed), open a URL or HTML file, or off",
-            group: "Annotate",
-            palette: true,
-            slash: { name: "annotate-web", arguments: true },
-            run: review.web,
           }, {
             id: "opencode-annotate.ref",
             title: "Reference another conversation",

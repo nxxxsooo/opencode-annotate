@@ -1,5 +1,40 @@
 # Releasing
 
+## 0.15.0 candidate — browser rounds and automatic connection — 2026-11-12
+
+The accepted browser work is isolated onto current public main, preserving the public
+README, demo assets, Safari build gates, toolbar images and 0.13.1/0.14.0 history.
+The mixed development checkout is read-only during preparation. This candidate includes
+global cross-page rounds (protocol 6 / review envelope v2), automatic host/session
+registration, the destination picker, empty-session creation, disconnect/reconnect,
+stable-identity retry migration, consolidated `/annotate` routing and confirmed
+text/browser feedback continuation. Existing `/ref` prompt behavior remains intact.
+
+The hc coordinator, raw-text `send-feedback` bridge action, hc tests/orchestration and
+hc-only Rust labels are excluded: browser delivery has no dependency on them. Safari
+build support was already released in 0.12.0 and is preserved, not listed as new work.
+No local settings, artwork, credentials or private captures are included. Reload the
+unpacked Chrome extension after updating so panel, worker and envelope versions match.
+
+| Surface | Candidate state |
+|---|---|
+| Source | Local `release/0.15.0` branch based on public main `eaeaf75`; no push or tag authorized in this preparation. |
+| Local checks | `npm ci`, local 0.15.0 `build:tui`, formatting/Clippy and all 403 Rust tests, `npm run check` (114 Node tests and package dry-run), all 42 isolated Chromium scenarios, all 23 isolated OpenCode smoke scenarios and reference smoke pass on OpenCode 2.2.7. |
+| CI | Pending; five native targets and Safari converter/Xcode gate have not run for this candidate. |
+| Publish / GitHub Release | Pending; no tag, publication or Release created. |
+| Registry | Pending; 0.15.0 archive, integrity, provenance and published-package checks remain to be verified after publication. |
+| Maintainer install | Unchanged; still the mixed development checkout. No global configuration or installed Safari app changed. |
+
+Smoke fixtures record production `steer` / `resume: true` intent and force
+`resume: false` at the API boundary; they do not prove live-model continuation.
+Their isolated TUI processes use short temporary homes to keep automatic host setup
+and registration away from user settings while respecting macOS socket-path limits.
+Public-main fixture message-ID namespacing and Unicode-only toolbar isolation remain
+intact. Safari unit fixtures now exercise the v2 per-note page payload and protocol 6.
+Headless Chromium tests use an isolated profile and a background panel tab, not the
+native side-panel shell or the maintainer's real Chrome sessions. Fresh Safari UI,
+everyday-profile acceptance and other-platform native binaries remain unverified here.
+
 ## 0.14.0 — references as prompts — 2026-11-11
 
 Authority: `reference-prompt-release-20261111` in [`sources.json`](../sources.json).

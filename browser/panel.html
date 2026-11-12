@@ -25,10 +25,6 @@
       <div class="utility-row"><button id="copy"><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg>Copy Markdown</button><button id="export"><svg class="icon" aria-hidden="true"><use href="#icon-download"/></svg>Export JSON</button></div>
       <details id="context-details"><summary>Review context · current round</summary><pre id="preview"></pre></details>
     </section>
-    <section id="session-options" class="session-chooser" aria-label="Destination selection" hidden>
-      <label for="targets">Choose session</label><select id="targets"><option value="">Choose a session…</option></select>
-      <p id="connection-hint" class="hint" aria-live="polite"></p><button id="refresh-targets">Refresh sessions</button>
-    </section>
     <div id="update-notice" class="update-notice" role="status" hidden><strong>Annotate was updated</strong><p>Reload once to finish. Notes and drafts are kept; reopen the panel with the icon or Alt+Shift+A afterwards.</p><button id="reload-extension" class="primary">Reload Annotate</button></div>
     <p id="page-error" class="error" role="alert" hidden></p>
     <div class="picker-row"><button id="pick" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-pick"/></svg><span id="pick-label">Pick element</span></button><span id="pick-hint">or select text</span></div>
@@ -47,8 +43,16 @@
     <section id="empty-state" class="empty-state"><h2 id="empty-title">Start with what you see.</h2><p>Pick an element or highlight text on the page, then describe what needs attention.</p><p id="empty-footnote" class="empty-footnote">Send one note straight away, or collect a few first. Your feedback stays local until you send.</p><button id="restore-round" class="text-button" hidden>Restore last round</button></section>
   </main>
   <footer class="delivery">
+    <section id="session-options" class="session-chooser" aria-label="Destination selection" hidden>
+      <div class="session-tools"><input id="session-filter" type="search" placeholder="Filter sessions" aria-label="Filter sessions" autocomplete="off" spellcheck="false"><select id="session-sort" aria-label="Sort sessions"><option value="updated">Recently updated</option><option value="created">Recently created</option><option value="title">Title</option></select></div>
+      <div id="targets" class="session-list" role="group" aria-label="Destination session"></div>
+      <button id="show-all-sessions" class="text-button" type="button" hidden></button>
+      <div id="workspaces" class="session-list" aria-label="OpenCode workspaces" hidden></div>
+      <div class="session-actions"><button id="new-session" class="text-button" type="button" hidden>New session</button><button id="disconnect" class="text-button" type="button" hidden>Disconnect</button></div>
+      <p id="connection-hint" class="hint" aria-live="polite"></p>
+    </section>
     <div class="destination"><svg class="icon" aria-hidden="true"><use href="#icon-session"/></svg><span class="destination-label">To</span><button id="change-target" class="destination-button" aria-label="Change destination session" aria-expanded="false" aria-controls="session-options"><span id="paired">Looking for your session…</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button><span id="link-state" class="link-state"></span></div>
-    <div class="send-row"><button id="send" class="primary" aria-describedby="paired status"><svg id="send-copy" class="icon" aria-hidden="true" hidden><use href="#icon-copy"/></svg><span id="send-label">Send &amp; continue</span><svg id="send-arrow" class="icon" aria-hidden="true" hidden><use href="#icon-arrow"/></svg></button><button id="copy-round" class="icon-button" aria-label="Copy notes instead and start the next round" title="Copy instead · paste into any agent" hidden><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg></button></div>
+    <div class="send-row"><button id="send" class="primary" aria-describedby="paired status"><span id="send-label">Send notes</span><svg id="send-arrow" class="icon" aria-hidden="true" hidden><use href="#icon-arrow"/></svg></button><button id="copy-round" class="soft" aria-label="Copy notes instead and start the next round" title="Copy instead · paste into any agent" hidden><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg><span>Copy instead</span></button></div>
     <p id="status" role="status" aria-live="polite">Looking for your OpenCode session…</p>
   </footer>
   <script type="module" src="panel.mjs"></script>

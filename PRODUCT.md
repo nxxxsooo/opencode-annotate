@@ -14,8 +14,8 @@ OpenCode users reviewing a webpage alongside an agent session select text or an 
 
 ## Operating context
 
-- Desktop Chrome side panel beside the page being reviewed; representative widths are 320–420 CSS pixels.
-- Browser companion sources are in `browser/`; Chrome Native Messaging connects it to a captured local OpenCode session.
+- Desktop Chrome side panel beside the page being reviewed; representative widths are 320–420 CSS pixels. Safari has no docked panel, so the same panel document opens as its own narrow window there.
+- Browser companion sources are in `browser/`; Chrome Native Messaging connects it to a captured local OpenCode session. Safari's app extension must stay sandboxed, so Safari keeps annotations local and copies rounds out instead of delivering them.
 - Selection evidence belongs to the reviewed page. Written feedback belongs to extension-owned UI and storage.
 - A Send action saves eligible current feedback, delivers pending notes, and continues the displayed session. Collecting feedback remains local until Send.
 

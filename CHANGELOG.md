@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.15.0 — browser rounds and automatic connection
+
+- Collect browser annotations across pages in one round, grouped by page in the panel
+  and in one Send/Copy message. Keep page-local drafts, off-page note actions and global
+  round recovery. Browser protocol 6 uses review envelope v2 with per-note pages.
+- Register the Chrome native host and current/new sessions automatically. Resolve the
+  real Node.js executable during setup; no separate host-install or pairing command is
+  needed in normal use. Discover new sessions faster and share overlapping checks.
+- Replace `/annotate-web` with `/annotate <url-or-html>`, and remove `/annotate-last`;
+  plain `/annotate` still reviews the latest completed reply.
+- Keep Send and Copy instead as separate actions. Choose destinations in one automatically
+  refreshed, filterable picker with current titles and activity/creation/title sorting.
+- Create empty OpenCode sessions from the extension without a prompt or model turn.
+  Disconnect/reconnect delivery without losing drafts or retries, and reconnect restarted
+  receivers by stable provider/session identity, carrying retries to the replacement.
+- Continue after confirmed text/browser annotation sends with `steer` / `resume: true`:
+  idle sessions start immediately; running turns receive feedback at the next boundary.
+- Preserve Safari's existing sandboxed, copy-only boundary. Reload the Chrome extension
+  after updating; protocol and review-envelope changes require matching companion files.
+
 ## 0.14.0 — references as prompts
 
 - Submit the referenced conversation, optional comment and inline annotations together

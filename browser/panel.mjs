@@ -5,11 +5,15 @@ const $ = id => document.getElementById(id)
 const make = (tag, text = "") => { const node = document.createElement(tag); node.textContent = text; return node }
 const clone = value => structuredClone(value)
 const writerID = crypto.randomUUID(), models = new Map(), busy = new Set()
+// Safari hosts the panel in its own window; the reviewed page is the active tab of
+// the window the panel was opened for, so the worker needs that window id.
 const windowID = panelWindowID()
+let state, model, destination, available, targets = [], workspaces = [], disconnected = false, connectionError = "", connectionLoading = true
+// Safari has no reachable bridge, so the panel offers copy instead of session delivery.
 let deliverySupported = true
-let state, model, destination, available, targets = [], connectionError = "", connectionLoading = true
-let refreshID = 0, connectionRevision = 0, connectionBusy = false, scheduledRefresh
-let pendingAction, pendingFocus, undoRecord, selectedNoteID, noteRenderKey, connectionOptionsKey, notice, outdated = false
+let refreshID = 0, connectionRevision = 0, connectionRefresh, connectionRefreshRevision, connectionTimer, scheduledRefresh
+let pendingAction, pendingFocus, undoRecord, selectedNoteID, noteRenderKey, notice, outdated = false
+let sessionSort = localStorage.getItem("sessionSort") || "updated", showAllSessions = false
 
 function icon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
@@ -55,7 +59,7 @@ async function run(id, fn) {
       model.conflict = error; model.error = error
       renderComposer()
     }
-    status(error.message, "error")
+    status(error.message, "error", ["send", "copy-round", "restore-round", "undo", "delete"].includes(id) ? null : page)
   } finally {
     busy.delete(id); if ($(id)) $(id).disabled = false; controls()
     if (!flushFocus() && !pendingFocus && document.activeElement === document.body && page === state?.page.url &&
@@ -75,7 +79,7 @@ function pendingCount() {
   const pending = state?.notes.filter(note => note.sentRevision !== note.revision) || []
   return pending.length + (validDraft() && !pending.some(note => note.id === model.value.editing?.id) ? 1 : 0)
 }
-function locked() { return ["save", "send", "copy-round", "restore-round", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft"].some(id => busy.has(id)) }
+function locked() { return ["save", "send", "copy-round", "restore-round", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft", "targets", "new-session", "disconnect", "change-target"].some(id => busy.has(id)) }
 function controls() {
   const lock = locked() || outdated
   $("comment").disabled = lock
@@ -84,7 +88,16 @@ function controls() {
   $("save-switch").disabled = lock || !validDraft() || !!model?.conflict
   $("pick").disabled = !state || lock
   $("cancel").disabled = lock
-  for (const id of ["discard-switch", "keep-editing", "retry-draft", "reload-draft", "keep-draft", "copy-draft", "undo", "restore-round", "targets", "change-target", "refresh-targets"]) $(id).disabled = lock
+  for (const id of ["discard-switch", "keep-editing", "retry-draft", "reload-draft", "keep-draft", "copy-draft", "undo", "restore-round", "change-target"]) $(id).disabled = lock
+  for (const row of $("targets").querySelectorAll(".session-row")) row.disabled = lock || !targets.some(target => target.id === row.dataset.targetId)
+  for (const row of $("workspaces").querySelectorAll("button")) row.disabled = lock
+  const creator = targets.find(target => target.id === destination?.id && target.canCreate)
+  $("new-session").hidden = !creator
+  $("new-session").disabled = lock || !creator
+  $("new-session").title = creator ? `Create an empty session in ${creator.directory} with this session's model` : ""
+  $("new-session").textContent = busy.has("new-session") ? "Creating session…" : "New session"
+  $("disconnect").hidden = !available
+  $("disconnect").disabled = lock || !available
   $("copy").disabled = $("export").disabled = !state?.notes.length
   for (const button of $("notes").querySelectorAll("button")) button.disabled = lock
   for (const id of busy) if ($(id)) $(id).disabled = true
@@ -152,7 +165,7 @@ async function discardDraft() {
 function draftNote(value) {
   const now = new Date().toISOString()
   return { id: value.editing?.id || crypto.randomUUID(), revision: (value.editing?.revision || 0) + 1,
-    createdAt: value.editing?.createdAt || now, updatedAt: now, kind: value.kind, comment: value.comment.trim(), anchor: value.anchor }
+    page: value.editing?.page || model.page, createdAt: value.editing?.createdAt || now, updatedAt: now, kind: value.kind, comment: value.comment.trim(), anchor: value.anchor }
 }
 async function saveCurrent(prepared) {
   const m = model
@@ -171,6 +184,11 @@ async function performAction(action) {
   else if (action.type === "edit") {
     const note = state.notes.find(note => note.id === action.id)
     if (!note) throw new Error("This note has been removed; choose another note")
+    if (note.page.url !== state.page.url) {
+      await call({ action: "reveal", noteID: note.id })
+      await refresh()
+      if (state.page.url !== note.page.url) throw new Error("Open the note's page before editing")
+    }
     openComposer({ anchor: note.anchor, kind: note.kind, comment: note.comment, editing: note })
   } else if (action.type === "delete") await deleteNote(action.id)
 }
@@ -188,7 +206,7 @@ async function deleteNote(id) {
   const result = await call({ action: "delete", url: state.page.url, note, baseRevision: note.revision,
     ...(clearDraft ? { draftRevision: m.record.revision, captures: m.value.captures } : {}) })
   if (clearDraft) { m.record = result.draft; m.value = null; m.touched = false }
-  undoRecord = { note: result.note, url: state.page.url }
+  undoRecord = { note: result.note }
   await refresh(); focusWhenReady("#undo")
 }
 
@@ -232,11 +250,20 @@ function renderEmpty() {
 function renderNotes() {
   const notes = state?.notes || []
   $("notes-section").hidden = !notes.length
-  $("count").textContent = `${plural(notes.length)} in this round`
-  const key = JSON.stringify([notes, state?.anchorStates, selectedNoteID])
+  const pageCount = new Set(notes.map(note => note.page.url)).size
+  $("count").textContent = `${plural(notes.length)} in this round${pageCount > 1 ? ` · ${pageCount} pages` : ""}`
+  const key = JSON.stringify([notes, state?.page.url, state?.anchorStates, selectedNoteID])
   if (key === noteRenderKey) return
   noteRenderKey = key; $("notes").replaceChildren()
+  let pageURL
   for (const [index, note] of notes.entries()) {
+    if (note.page.url !== pageURL) {
+      pageURL = note.page.url
+      const page = note.page, url = new URL(page.url), header = make("li"), title = make("strong", page.title)
+      header.className = "page-group"; header.title = page.url
+      header.append(title, make("span", `${url.host}${url.pathname}${page.url === state.page.url ? " · This page" : ""}`))
+      $("notes").append(header)
+    }
     const item = make("li"), number = make("span", index + 1), content = make("div"), target = make("button"), bottom = make("div"), meta = make("span")
     item.className = `note${selectedNoteID === note.id ? " is-current" : ""}`; item.dataset.noteId = note.id
     number.className = "note-number"; number.setAttribute("aria-label", `Note ${index + 1}`)
@@ -244,13 +271,13 @@ function renderNotes() {
     target.append(make("span", note.anchor.quote.slice(0, 200)), icon("reveal"))
     target.onclick = () => run("reveal", async () => {
       await call({ action: "reveal", url: state.page.url, noteID: note.id }); selectedNoteID = note.id
-      status("Element highlighted on the page"); renderNotes()
+      await refresh(); status("Element highlighted on the page"); renderNotes()
       $("notes").querySelector(`[data-note-id="${CSS.escape(note.id)}"] .note-target`)?.focus({ preventScroll: true })
     })
     const comment = make("p", note.comment); comment.className = "note-comment"
     content.append(target, comment)
     const anchorState = state.anchorStates[index]
-    if (anchorState !== "located") { const warning = make("p", `Element ${anchorState}. Your feedback is kept.`); warning.className = "warning"; content.append(warning) }
+    if (anchorState !== "located" && anchorState !== "elsewhere") { const warning = make("p", `Element ${anchorState}. Your feedback is kept.`); warning.className = "warning"; content.append(warning) }
     bottom.className = "note-bottom"; meta.className = "note-meta"
     if (note.kind === "ask") meta.append(make("span", "Question"))
     const edit = make("button", "Edit"), remove = make("button")
@@ -263,26 +290,25 @@ function renderNotes() {
   $("preview").textContent = notes.length ? markdown(review()) : "Add a note to preview the feedback."
   call({ action: "markers" }).catch(() => {})
 }
-// Delivery has exactly two modes: a live session receives Send; otherwise the round is copied for any agent.
-function deliveryMode() { return connectionLoading ? "loading" : available ? "send" : "copy" }
+// Send always means session delivery; Copy instead is a separate, stable action.
 function renderDelivery() {
-  const mode = deliveryMode(), retry = mode === "send" ? state?.outbox : null, pending = pendingCount()
-  const count = retry?.count ?? pending, working = busy.has("send") || busy.has("copy-round")
+  const retry = state?.outbox, pending = pendingCount(), count = retry?.count ?? pending
+  const working = busy.has("send") || busy.has("copy-round")
   if (!deliverySupported) {
     $("empty-footnote").textContent = "Collect a few notes, then copy the round into your agent."
     $("paired").textContent = "Copy only"
     $("change-target").disabled = true
     $("link-state").textContent = ""
     $("link-state").className = "link-state"
-    $("send-label").textContent = working ? "Copying…" : count ? `Copy ${plural(count)}` : "Copy notes"
+    $("send-label").textContent = working && busy.has("copy-round") ? "Copying…" : count ? `Copy ${plural(count)}` : "Copy notes"
     $("send").disabled = locked() || outdated || !state || !count || !!model?.conflict
-    $("send-arrow").toggleAttribute("hidden", true)
-    $("send-copy").toggleAttribute("hidden", !count || working)
+    $("send-arrow").toggleAttribute("hidden", !count || working)
     $("copy-round").hidden = true
     const currentNotice = notice && (!notice.page || notice.page === state?.page.url) ? notice : null
     for (const tone of ["error", "warning", "success"]) $("status").classList.toggle(tone, currentNotice?.tone === tone)
     $("status").textContent = currentNotice?.text || (connectionLoading ? "Preparing the panel…" :
-      working ? "Copying to the clipboard…" : count ? "Safari keeps notes local. Copy the round and paste it into any agent." :
+      working ? "Copying to the clipboard…" :
+      count ? "Safari keeps notes local. Copy the round and paste it into any agent." :
       "Safari keeps notes local. Add a note, then copy the round into your agent.")
     return
   }
@@ -290,32 +316,30 @@ function renderDelivery() {
   const choosing = !destination && targets.length > 0
   $("paired").textContent = destination?.title || (connectionLoading ? "Looking for your session…" : choosing ? "Choose a session" : "No session")
   $("change-target").title = destination ? `${destination.title}\n${destination.directory}` : "Choose where to send feedback"
-  $("link-state").textContent = mode === "send" ? "Live" : mode === "copy" && destination ? "Offline" : ""
-  $("link-state").className = `link-state ${mode === "send" ? "live" : "offline"}`
-  $("send-label").textContent = working ? busy.has("copy-round") || mode === "copy" ? "Copying…" : "Sending…" :
-    !state ? "Open a page to start" : mode === "loading" ? "Looking for your session…" :
-    mode === "copy" ? count ? `Copy ${plural(count)}` : destination ? "Reconnect session" : choosing ? "Choose a session" : "Connect a session" :
-    wrongDestination ? "Choose original session" : count ? `${retry ? "Retry" : "Send"} ${plural(count)}` : "Send notes"
-  $("send").disabled = locked() || outdated || !state || mode === "loading" ||
-    (mode === "send" && (!count || (!retry && !!model?.conflict))) || (mode === "copy" && !!count && !!model?.conflict)
-  $("send-arrow").toggleAttribute("hidden", mode !== "send" || !count || working)
-  $("send-copy").toggleAttribute("hidden", mode !== "copy" || !count || working)
-  $("copy-round").hidden = mode !== "send" || !state || !pending
+  $("link-state").textContent = available ? "Live" : disconnected ? "Disconnected" : destination ? "Offline" : ""
+  $("link-state").className = `link-state ${available ? "live" : "offline"}`
+  $("send-label").textContent = working && !busy.has("copy-round") ? "Sending…" :
+    !state ? "Open a page to start" : connectionLoading ? "Looking for your session…" :
+    count ? `${retry ? "Retry" : "Send"} ${plural(count)}` : "Send notes"
+  $("send").disabled = locked() || outdated || !state || connectionLoading || !count || (!retry && !!model?.conflict)
+  $("send-arrow").toggleAttribute("hidden", !count || working)
+  $("copy-round").hidden = !state || !count
   $("copy-round").disabled = locked() || outdated || !!model?.conflict
   const currentNotice = notice && (!notice.page || notice.page === state?.page.url) ? notice : null
   for (const tone of ["error", "warning", "success"]) $("status").classList.toggle(tone, currentNotice?.tone === tone)
-  const where = destination ? "Session offline" : "No session"
-  $("status").textContent = currentNotice?.text || (mode === "loading" ? "Looking for your OpenCode session…" :
-    working ? busy.has("copy-round") || mode === "copy" ? "Copying to the clipboard…" : "Sending to the session…" :
-    mode === "copy" && choosing ? count ? "Choose a session above to send, or copy for any agent." : "Choose the session that should receive this review." :
-    mode === "copy" ? count ? `${where} · Copy works with any agent. Run /annotate-web in a session to send instead.` :
-      destination ? "Session offline · run /annotate-web in it to reconnect." : "No session · run /annotate-web in OpenCode, or add notes and copy them." :
-    wrongDestination ? "This batch belongs to the previous session." : retry ? "Retry the previous batch. New feedback stays local." :
+  $("status").textContent = currentNotice?.text || (connectionLoading ? "Looking for your OpenCode session…" :
+    working ? busy.has("copy-round") ? "Copying to the clipboard…" : "Sending to the session…" :
+    disconnected ? "Disconnected · choose a session to reconnect, or copy instead." :
+    wrongDestination ? "This batch belongs to the previous session." :
+    choosing ? "Choose the session that should receive this review, or copy instead." :
+    !available ? count ? `${destination ? "Session offline" : "No live session"} · Send will retry; Copy instead works with any agent.` :
+      destination ? "Session offline · reopen it in OpenCode or AGY." : "No session · open one in OpenCode or AGY; notes can still be copied." :
+    retry ? "Retry the previous batch. New feedback stays local." :
     count ? validDraft() ? "Sends to this session, including your current feedback." : "Sends to this session; the list starts fresh." : "Feedback stays local until you send.")
 }
 function render() {
   renderComposer(); renderNotes()
-  $("undo-notice").hidden = !undoRecord || undoRecord.url !== state?.page.url
+  $("undo-notice").hidden = !undoRecord
   controls()
 }
 function scheduleRefresh() { clearTimeout(scheduledRefresh); scheduledRefresh = setTimeout(() => refresh(), 30) }
@@ -325,7 +349,7 @@ async function refresh() {
     const next = await call({ action: "current" })
     if (request !== refreshID) return
     if (next.protocol !== PROTOCOL) { markOutdated(); return }
-    if (state?.page.url !== next.page.url) { pendingAction = null; selectedNoteID = null; notice = null }
+    if (state?.page.url !== next.page.url) { pendingAction = null; selectedNoteID = null; pendingFocus = null; if (notice?.page) notice = null }
     state = next; model = modelFor(next)
     $("page-title").textContent = next.page.title; $("page-title").title = next.page.title
     const url = new URL(next.page.url)
@@ -352,46 +376,104 @@ async function refresh() {
   }
 }
 function showSessionOptions(show = true, focus = true) {
+  const opening = show && $("session-options").hidden
   $("session-options").hidden = !show; $("change-target").setAttribute("aria-expanded", String(show))
-  if (show && focus) { notice = null; $("panel-body").scrollTop = 0; focusWhenReady("#targets", false) }
+  if (opening) { $("session-filter").value = ""; showAllSessions = false; renderSessions() }
+  if (show && focus) { notice = null; focusWhenReady("#session-filter", false) }
 }
-async function refreshConnection() {
-  if (connectionBusy) return
-  connectionBusy = true
+const RECENT_SESSIONS = 6
+const recency = target => target.updated ?? target.registered ?? 0
+const folder = directory => directory?.split("/").filter(Boolean).pop() || directory || ""
+function ago(time) {
+  if (!time) return ""
+  const minutes = Math.floor((Date.now() - time) / 60000)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`
+  const days = Math.floor(minutes / 1440)
+  return days < 14 ? `${days}d ago` : new Date(time).toLocaleDateString()
+}
+function sortedSessions() {
+  const created = target => target.created ?? recency(target)
+  const order = sessionSort === "title" ? (a, b) => a.title.localeCompare(b.title) :
+    sessionSort === "created" ? (a, b) => created(b) - created(a) : (a, b) => recency(b) - recency(a)
+  return [...targets].sort((a, b) => order(a, b) || a.title.localeCompare(b.title))
+}
+function sessionRow(target, offline = false) {
+  const button = make("button"); button.type = "button"; button.className = "session-row"; button.dataset.targetId = target.id
+  button.setAttribute("aria-pressed", String(target.id === destination?.id)); button.title = `${target.title}\n${target.directory}`
+  button.disabled = offline || locked() || outdated
+  const time = offline ? "disconnected" : sessionSort === "created" ? target.created && `created ${ago(target.created)}` : ago(recency(target))
+  const title = make("span", target.title), meta = make("span", [target.provider?.toUpperCase(), time, folder(target.directory)].filter(Boolean).join(" · "))
+  title.className = "session-title"; meta.className = "session-meta"
+  button.append(title, meta)
+  return button
+}
+// Newest activity first; the rest stay reachable through the filter or "Show all".
+function renderSessions() {
+  const query = $("session-filter").value.trim().toLowerCase()
+  const matches = sortedSessions().filter(target => !query || `${target.title} ${target.directory} ${target.provider}`.toLowerCase().includes(query))
+  const limited = !query && !showAllSessions && matches.length > RECENT_SESSIONS
+  const focused = document.activeElement?.closest?.("#targets [data-target-id]")?.dataset.targetId
+  const rows = (limited ? matches.slice(0, RECENT_SESSIONS) : matches).map(target => sessionRow(target))
+  if (destination && !query && !targets.some(target => target.id === destination.id)) rows.unshift(sessionRow(destination, true))
+  if (!rows.length) { const empty = make("p", query ? "No matching sessions." : "No live sessions."); empty.className = "hint"; rows.push(empty) }
+  $("targets").replaceChildren(...rows)
+  if (focused) $("targets").querySelector(`[data-target-id="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true })
+  const expandable = !query && matches.length > RECENT_SESSIONS
+  $("show-all-sessions").hidden = !expandable
+  $("show-all-sessions").textContent = showAllSessions ? "Show recent only" : `Show all ${matches.length}`
+  $("workspaces").replaceChildren(...workspaces.filter(target => !query || target.directory.toLowerCase().includes(query)).map(target => {
+    const button = make("button"); button.type = "button"; button.className = "session-row"; button.disabled = locked() || outdated
+    button.title = `Create an empty session in ${target.directory} with the model selected in OpenCode`
+    const title = make("span", `New session in ${folder(target.directory)}`), meta = make("span", target.directory)
+    title.className = "session-title"; meta.className = "session-meta"; button.append(title, meta)
+    button.onclick = () => createSession(target.id)
+    return button
+  }))
+  $("workspaces").hidden = !$("workspaces").childElementCount
+}
+function refreshConnection() {
+  if (connectionRefresh) return connectionRefreshRevision === connectionRevision
+    ? connectionRefresh : connectionRefresh.then(() => refreshConnection())
+  if (outdated) return Promise.resolve()
+  clearTimeout(connectionTimer)
+  connectionRefreshRevision = connectionRevision
+  connectionRefresh = readConnection().finally(() => {
+    connectionRefresh = undefined
+    // Discover a session started after the panel promptly; a live connection needs
+    // fewer probes. Schedule after completion so slow startup cannot pile up requests.
+    if (!outdated) connectionTimer = setTimeout(() => {
+      if (panelPolling()) refreshConnection()
+    }, deliverySupported ? available ? 10000 : 1500 : 60000)
+  })
+  return connectionRefresh
+}
+async function readConnection() {
   const revision = connectionRevision
   try {
     const result = await call({ action: "connection" })
     if (revision !== connectionRevision) return
     deliverySupported = result.delivery !== false
     if (!deliverySupported) {
-      targets = []; available = null; destination = null; connectionError = ""
+      targets = []; workspaces = []; available = null; destination = null; connectionError = ""
+      disconnected = false
       $("connection-hint").textContent = "Safari keeps notes local. Copy a round and paste it into your agent."
-      showSessionOptions(false, false)
+      $("empty-footnote").textContent = "Collect a few notes, then copy the round into your agent."
+      renderSessions()
       return
     }
     if (available?.id !== result.target?.id || destination?.id !== result.destination?.id) notice = null
-    targets = result.targets; available = result.target; destination = result.destination; connectionError = result.error || ""
-    const optionsKey = JSON.stringify([targets.map(target => [target.id, target.provider, target.title, target.directory]), destination?.id, !!available])
-    if (optionsKey !== connectionOptionsKey) {
-      connectionOptionsKey = optionsKey
-      $("targets").replaceChildren(make("option", "Choose a session…")); $("targets").firstChild.value = ""
-      if (destination && !targets.some(target => target.id === destination.id)) {
-        const badge = destination.provider ? `[${destination.provider.toUpperCase()}] ` : ""
-        const option = make("option", `${badge}${destination.title} — disconnected`); option.value = destination.id; option.disabled = true; $("targets").append(option)
-      }
-      for (const target of targets) {
-        const badge = target.provider ? `[${target.provider.toUpperCase()}] ` : ""
-        const option = make("option", `${badge}${target.title} — ${target.directory}`); option.value = target.id; $("targets").append(option)
-      }
-      $("targets").value = destination?.id || ""
-    }
-    $("connection-hint").textContent = connectionError ? `Session unavailable: ${connectionError}` : !available && destination ? "Reconnect the original session, then refresh. Choose another session only to change the destination." : targets.length > 1 && !destination ? "Choose the session that should receive this review." : !available ? "Run /annotate-web in OpenCode or AGY, then refresh." : "Sending continues the selected session."
-    if (!destination && targets.length > 1) showSessionOptions(true, false)
+    targets = result.targets; workspaces = result.workspaces; disconnected = result.disconnected
+    available = result.target; destination = result.destination; connectionError = result.error || ""
+    renderSessions()
+    $("connection-hint").textContent = connectionError ? `Connection unavailable: ${connectionError}` : disconnected ? "Select a session to reconnect. Your notes and drafts are kept." : !available && destination ? "Reopen the original session in OpenCode or AGY. This list refreshes automatically." : workspaces.length && !targets.length ? "Create an empty session in an open workspace. Nothing is sent until you click Send." : targets.length > 1 && !destination ? "Choose the session that should receive this review." : !available ? "Open a session in OpenCode or AGY; this panel connects automatically." : ""
+    if (!destination && (targets.length > 1 || workspaces.length)) showSessionOptions(true, false)
   } catch (error) {
     available = null; connectionError = error.message; $("connection-hint").textContent = `Session unavailable: ${error.message}`
-  } finally { connectionBusy = false; connectionLoading = false; controls() }
+  } finally { connectionLoading = false; controls() }
 }
-function review() { return validateReview({ version: 1, page: state.page, annotations: state.notes }) }
+function review() { return validateReview({ version: 2, annotations: state.notes }) }
 
 $("comment").addEventListener("input", () => {
   model.value.comment = $("comment").value; notice = null
@@ -438,20 +520,55 @@ task("copy-draft", async () => {
   catch { $("comment").focus(); $("comment").select(); status("Automatic copy was blocked. Press Cmd/Ctrl+C to copy your draft.", "error") }
 })
 task("undo", async () => {
-  const { note, url } = undoRecord
-  await call({ action: "restore", url, note, baseRevision: note.revision }); undoRecord = null
+   const { note } = undoRecord
+   await call({ action: "restore", note, baseRevision: note.revision }); undoRecord = null
   await refresh(); status("Note restored"); focusWhenReady(`[data-note-id="${CSS.escape(note.id)}"] .note-target`)
 })
 task("more", () => { const show = $("utilities").hidden; $("utilities").hidden = !show; $("more").setAttribute("aria-expanded", String(show)); if (show) $("panel-body").scrollTop = 0 })
-task("refresh-targets", refreshConnection)
 task("change-target", async () => { showSessionOptions($("session-options").hidden); if (!$("session-options").hidden) await refreshConnection() })
-$("targets").addEventListener("change", () => run("targets", async () => {
-  const target = targets.find(target => target.id === $("targets").value)
+$("session-sort").value = sessionSort
+$("session-sort").addEventListener("change", () => { sessionSort = $("session-sort").value; localStorage.setItem("sessionSort", sessionSort); renderSessions() })
+$("session-filter").addEventListener("input", renderSessions)
+$("session-filter").addEventListener("keydown", event => {
+  if (event.key === "Enter") { event.preventDefault(); $("targets").querySelector(".session-row:enabled")?.click() }
+  if (event.key === "ArrowDown") { event.preventDefault(); $("targets").querySelector(".session-row:enabled")?.focus() }
+})
+$("targets").addEventListener("keydown", event => {
+  if (!["ArrowDown", "ArrowUp"].includes(event.key)) return
+  const rows = [...$("targets").querySelectorAll(".session-row:enabled")], index = rows.indexOf(document.activeElement)
+  event.preventDefault()
+  if (event.key === "ArrowUp" && index <= 0) $("session-filter").focus()
+  else rows[Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))]?.focus()
+})
+$("show-all-sessions").addEventListener("click", () => { showAllSessions = !showAllSessions; renderSessions() })
+$("targets").addEventListener("click", event => {
+  const row = event.target.closest(".session-row")
+  if (row && !row.disabled) choose(row.dataset.targetId)
+})
+const choose = targetID => run("targets", async () => {
+  const target = targets.find(target => target.id === targetID)
   if (!target) return
   connectionRevision++
   destination = (await call({ action: "pair", target })).target; available = destination; connectionError = ""; notice = null
-  showSessionOptions(false); renderDelivery(); focusWhenReady("#change-target", false)
-}))
+  disconnected = false
+  showSessionOptions(false); renderDelivery(); renderSessions(); focusWhenReady("#change-target", false)
+})
+const createSession = targetID => run("new-session", async () => {
+  connectionRevision++
+  const result = await call({ action: "create-session", targetID })
+  destination = available = result.target; disconnected = false; connectionError = ""
+  targets = [...targets.filter(target => target.id !== destination.id), destination]
+  showSessionOptions(false); renderSessions(); status("Empty session created. Your notes stay local until you send.", "success")
+  focusWhenReady("#change-target", false)
+})
+$("new-session").addEventListener("click", () => { if (destination) createSession(destination.id) })
+task("disconnect", async () => {
+  connectionRevision++
+  destination = (await call({ action: "disconnect", targetID: destination.id })).target
+  available = null; disconnected = true
+  showSessionOptions(false); renderSessions(); status("Disconnected. Your notes and drafts are kept.")
+  focusWhenReady("#change-target", false)
+})
 function showManualCopy(text) {
   $("utilities").hidden = false; $("more").setAttribute("aria-expanded", "true"); $("context-details").open = true
   $("preview").textContent = text
@@ -468,12 +585,11 @@ function copyText(text) {
   return navigator.clipboard.writeText(text).catch(error => { if (!legacy()) throw error })
 }
 async function copyRound() {
-  const page = state.page
   if (model.error || model.conflict) throw model.conflict || model.error
   const prepared = validDraft() ? draftNote(clone(model.value)) : null
   const notes = !prepared ? state.notes : state.notes.some(note => note.id === prepared.id)
     ? state.notes.map(note => note.id === prepared.id ? prepared : note) : [...state.notes, prepared]
-  const text = markdown(validateReview({ version: 1, page, annotations: notes }))
+  const text = markdown(validateReview({ version: 2, annotations: notes }))
   try { await copyText(text) }
   catch {
     showManualCopy(text)
@@ -481,22 +597,23 @@ async function copyRound() {
     return
   }
   if (prepared) await saveCurrent(prepared)
-  const result = await call({ action: "copied", url: page.url, notes: notes.map(({ id, revision }) => ({ id, revision })) })
+  const result = await call({ action: "copied", notes: notes.map(({ id, revision, page }) => ({ id, revision, page })) })
   await refresh()
-  status(`Copied ${plural(result.count)} · paste into any agent. Ready for the next round.`, "success", page.url)
+  status(`Copied ${plural(result.count)} · paste into any agent. Ready for the next round.`, "success", null)
   focusWhenReady(model.value ? "#comment" : "#pick")
 }
 task("copy-round", copyRound)
 task("restore-round", async () => {
   const result = await call({ action: "restore-round", url: state.page.url, roundID: state.lastRound.id })
-  await refresh(); status(`Restored ${plural(result.count)} to this round`); focusWhenReady("#notes .note-target")
+  await refresh(); status(`Restored ${plural(result.count)} to this round`, "", null); focusWhenReady("#notes .note-target")
 })
 task("send", async () => {
+  // Safari has no reachable bridge; the primary button copies out instead.
   if (!deliverySupported) return copyRound()
-  // The click follows the visible label: Copy without a live session, Send with one.
-  if (deliveryMode() === "copy") {
-    if (state && pendingCount()) return copyRound()
-    showSessionOptions(); await refreshConnection(); return
+  if (!available || !destination) {
+    await refreshConnection()
+    if (!destination && targets.length) { showSessionOptions(); status("Choose the session that should receive this review, or copy instead.", "warning"); return }
+    if (!available) { showSessionOptions(); status("No live session. Notes are kept; reopen the session or use Copy instead.", "warning"); return }
   }
   if (state.outbox && state.outbox.targetID !== destination.id) { showSessionOptions(); status("Choose the original session to retry this batch, or copy your notes.", "warning"); return }
   const target = destination, page = state.page
@@ -504,17 +621,17 @@ task("send", async () => {
     if (model.error || model.conflict) throw model.conflict || model.error
     if (validDraft()) await saveCurrent()
   }
-  status("Sending feedback…")
+  status("Sending feedback…", "", null)
   let result
   try { result = await call({ action: "send", url: page.url, targetID: target.id }) }
   catch (error) {
     await Promise.all([refresh(), refreshConnection()])
     if (available) throw error
-    status("The session went offline before receiving this round. Notes are kept; copy them, or run /annotate-web there and send again.", "warning", page.url)
+    status("The session went offline before receiving this round. Notes are kept; reopen it or use Copy instead.", "warning", null)
     return
   }
   await refresh(); $("status").title = result.messageID
-  status(`Sent ${plural(result.count)} to ${target.title}. Ready for the next round.`, "success", page.url)
+  status(`Sent ${plural(result.count)} to ${target.title}. Ready for the next round.`, "success", null)
   focusWhenReady(model.value ? "#comment" : "#pick")
 })
 $("reload-extension").addEventListener("click", () => chrome.runtime.reload())
@@ -528,6 +645,9 @@ task("export", () => {
   const link = make("a"); link.href = url; link.download = "annotate-feedback.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   status("Complete review exported")
 })
+document.addEventListener("click", event => {
+  if (!$("session-options").hidden && !$("session-options").contains(event.target) && !$("change-target").contains(event.target)) showSessionOptions(false)
+})
 document.addEventListener("keydown", event => {
   if (event.key !== "Escape") return
   if (state?.picking) $("pick").click()
@@ -538,11 +658,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     const ownDraftsOnly = Object.entries(changes).every(([key, value]) => key.startsWith("draft:") && value.newValue?.writerID === writerID)
     if (!ownDraftsOnly) scheduleRefresh()
   }
-  if (changes.paired) refreshConnection()
+   if (changes.paired || changes.disconnected) refreshConnection()
 })
 chrome.tabs.onActivated.addListener(scheduleRefresh)
 chrome.tabs.onUpdated.addListener((_id, change) => { if (change.status === "complete") scheduleRefresh() })
 setInterval(() => { if (panelPolling()) refresh() }, 1500)
-setInterval(() => { if (panelPolling()) refreshConnection() }, 10000)
+document.addEventListener("visibilitychange", () => { if (panelPolling()) refreshConnection() })
 window.addEventListener("focus", refreshConnection)
 await Promise.all([refreshConnection(), refresh()])

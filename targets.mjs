@@ -7,11 +7,10 @@ const unquote = input => {
   const value = input.trim()
   return ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) ? value.slice(1, -1) : value
 }
-export const wantsBrowser = input => /^web(?: off)?$/.test(unquote(input)) || /\.html?$/i.test(unquote(input)) || /^[a-z][a-z0-9+.-]*:/i.test(unquote(input))
+export const wantsBrowser = input => /\.html?$/i.test(unquote(input)) || /^[a-z][a-z0-9+.-]*:/i.test(unquote(input))
 
 export async function browserTarget(input, directory) {
   let value = unquote(input)
-  if (value === "web") return { type: "browser" }
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
     const url = new URL(value)
     if (["http:", "https:"].includes(url.protocol)) {

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, writeFile, readFile, readdir } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { randomUUID } from "node:crypto"
@@ -9,14 +9,53 @@ import { PassThrough } from "node:stream"
 import { browserTarget, wantsBrowser } from "../targets.mjs"
 import { createReceiver, listTargets } from "./receiver.mjs"
 import { encode, decodeStream, request } from "./wire.mjs"
-import { markdown, safeUrl } from "../browser/protocol.mjs"
-import { installBridge } from "../scripts/install-bridge.mjs"
+import { markdown, orderedNotes, safeUrl, validateReview } from "../browser/protocol.mjs"
+import { installBridge, resolveNode } from "../scripts/install-bridge.mjs"
 import { migratePageContext } from "../scripts/migrate-page-context.mjs"
 
-const review = () => ({ version: 1, page: { url: "https://example.test/page", title: "Fixture" }, annotations: [
-  { id: "note-1", revision: 1, kind: "ask", comment: "Explain this paragraph", createdAt: new Date().toISOString(),
+const review = () => ({ version: 2, annotations: [
+  { page: { url: "https://example.test/page", title: "Fixture" }, id: "note-1", revision: 1, kind: "ask", comment: "Explain this paragraph", createdAt: new Date().toISOString(),
     anchor: { type: "text", quote: "same", prefix: "second ", suffix: " occurrence", selector: "#paragraph", styles: "font: 16px", accessibility: "role=main" } },
 ] })
+test("v2 reviews carry validated pages per annotation and group the global round", () => {
+  const batch = review(), first = batch.annotations[0]
+  batch.annotations.push({ ...first, id: "note-2", page: { url: "https://example.test/other", title: "Other page" } },
+    { ...first, id: "note-3" })
+  const text = markdown(batch)
+  assert.equal((text.match(/untrusted source material/g) || []).length, 1)
+  assert.equal((text.match(/^## Fixture$/gm) || []).length, 1)
+  assert.match(text, /## Other page\nURL: https:\/\/example.test\/other/)
+  for (let number = 1; number <= 3; number++) assert.ok(text.includes(`### Annotation ${number} (ask)`))
+  assert.throws(() => validateReview({ ...batch, version: 1 }), /envelope/)
+  assert.throws(() => validateReview({ ...batch, page: first.page }), /envelope/)
+  for (const page of [undefined, { url: "javascript:alert(1)", title: "Unsafe" }, { url: "https://example.test/?token=secret", title: "Unsafe" }, { ...first.page, title: "Title\nNew heading" }]) {
+    assert.throws(() => validateReview({ version: 2, annotations: [{ ...first, page }] }))
+  }
+})
+test("interleaved page notes share contiguous display, marker and delivery ordering", () => {
+  const first = review().annotations[0], other = { url: "https://example.test/other", title: "Other page" }
+  const notes = [
+    { ...first, id: "a1", comment: "A first", createdAt: "2026-11-12T00:00:00Z" },
+    { ...first, id: "b1", page: other, comment: "B first", createdAt: "2026-11-12T00:01:00Z" },
+    { ...first, id: "a3", comment: "A third", createdAt: "2026-11-12T00:02:00Z" },
+    { ...first, id: "a2", comment: "A second", createdAt: "2026-11-12T00:02:00Z" },
+  ]
+  const ordered = orderedNotes(notes)
+  assert.deepEqual(ordered.map(note => note.id), ["a1", "a2", "a3", "b1"])
+  assert.deepEqual(notes.map(note => note.id), ["a1", "b1", "a3", "a2"], "ordering must not mutate the source")
+  assert.deepEqual(orderedNotes([...notes].reverse()), ordered, "input/storage order must not affect the round")
+  const text = markdown({ version: 2, annotations: notes })
+  assert.deepEqual([...text.matchAll(/^### Annotation (\d+)/gm)].map(match => Number(match[1])), [1, 2, 3, 4])
+  assert.ok(text.indexOf("A first") < text.indexOf("A second"))
+  assert.ok(text.indexOf("A second") < text.indexOf("A third"))
+  assert.ok(text.indexOf("A third") < text.indexOf("## Other page"))
+  assert.ok(text.indexOf("## Other page") < text.indexOf("### Annotation 4"))
+})
+test("Chrome extension version matches the package release", async () => {
+  const read = file => readFile(new URL(file, import.meta.url), "utf8").then(JSON.parse)
+  const [pkg, manifest] = await Promise.all([read("../package.json"), read("../browser/manifest.json")])
+  assert.equal(manifest.version, pkg.version)
+})
 async function fixture(t) {
   const base = path.join(os.homedir(), ".cache")
   await mkdir(base, { recursive: true })
@@ -27,11 +66,11 @@ async function fixture(t) {
 test("routing is explicit and preserves text defaults", async t => {
   const root = await fixture(t)
   await writeFile(path.join(root, "中文 space.HTML"), "<h1>Fixture</h1>")
-  for (const input of ["", "1", "2", "notes.md", "reply.txt"]) assert.equal(wantsBrowser(input), false)
+  for (const input of ["", "1", "2", "notes.md", "reply.txt", "web", "web off"]) assert.equal(wantsBrowser(input), false)
   assert.equal(wantsBrowser('"中文 space.HTML"'), true)
   assert.match((await browserTarget('"中文 space.HTML"', root)).url, /^file:/)
   assert.equal((await browserTarget("https://example.test", root)).type, "browser")
-  assert.equal((await browserTarget("web", root)).url, undefined)
+  assert.equal(await browserTarget("web", root), null)
   await assert.rejects(browserTarget("javascript:alert(1)", root))
   await assert.rejects(browserTarget("missing.html", root))
 })
@@ -66,7 +105,7 @@ test("duplicate retries admit once to the captured session", async t => {
   const batch = { action: "send", targetID: receiver.target.id, batchID: randomUUID(), review: review() }
   const [a, b] = await Promise.all([request(receiver.target.socket, batch), request(receiver.target.socket, batch)])
   assert.equal(a.state, "admitted"); assert.deepEqual(a, b); assert.equal(sent.length, 1)
-  assert.equal(sent[0].sessionID, "ses_original"); assert.equal(sent[0].resume, false); assert.equal(sent[0].delivery, "queue")
+  assert.equal(sent[0].sessionID, "ses_original"); assert.equal(sent[0].resume, false); assert.equal(sent[0].delivery, "steer")
   const conflict = structuredClone(batch); conflict.review.annotations[0].comment = "different"
   assert.equal((await request(receiver.target.socket, conflict)).ok, false)
   assert.equal((await listTargets(root)).length, 1)
@@ -121,18 +160,39 @@ test("receiver supports custom provider and custom deliver callback", async t =>
   assert.equal(delivered[0].batchID, batch.batchID)
   assert.ok(delivered[0].markdown.includes("Explain this paragraph"))
 })
+test("automatic host setup resolves Node instead of the OpenCode executable", async t => {
+  const root = await fixture(t), bin = path.join(root, "bin")
+  await mkdir(bin)
+  const node = path.join(bin, "node")
+  await writeFile(node, "", { mode: 0o700 })
+  assert.equal(await resolveNode({ execPath: "/Applications/OpenCode.app/Contents/MacOS/opencode", pathEnv: bin, platform: "darwin" }), node)
+  assert.equal(await resolveNode({ execPath: node, pathEnv: "", platform: "darwin" }), node)
+  await assert.rejects(resolveNode({ execPath: "/usr/bin/opencode", pathEnv: "", platform: "linux" }), /Node\.js 22\+/)
+})
 test("native host uses exact origin allowlist and standard framed replies", async t => {
   const root = await fixture(t)
-  const installation = await installBridge({ profileDirectory: path.join(root, "chrome"), installRoot: path.join(root, "host") })
+  const receiver = await createReceiver({ root, sessionID: "ses_native", title: "ses_native", directory: "/project",
+    client: { session: { get: async () => ({ title: "Generated title", time: { created: 1, updated: 2 } }) } } })
+  t.after(() => receiver.close())
+  const installation = await installBridge({ profileDirectory: path.join(root, "chrome"), installRoot: path.join(root, "host"), targetsDirectory: root })
   const manifest = JSON.parse(await readFile(installation.hostManifest, "utf8"))
   assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${installation.extensionID}/`])
-  const child = spawn(installation.launcher, [manifest.allowed_origins[0]], { stdio: ["pipe", "pipe", "pipe"] })
-  const result = await new Promise((resolve, reject) => {
-    decodeStream(child.stdout, resolve, reject)
-    child.once("error", reject)
-    child.stdin.end(encode({ action: "targets" }))
-  })
-  assert.equal(result.ok, true); assert.ok(Array.isArray(result.targets))
+  await installBridge({ profileDirectory: path.join(root, "chrome"), installRoot: path.join(root, "host"), targetsDirectory: root })
+  assert.equal((await readdir(path.dirname(installation.hostManifest))).some(name => name.includes(".backup-")), false, "automatic registration must not create backups when nothing changed")
+  const exchange = message => {
+    const child = spawn(installation.launcher, [manifest.allowed_origins[0]], { stdio: ["pipe", "pipe", "pipe"] })
+    return new Promise((resolve, reject) => {
+      decodeStream(child.stdout, resolve, reject)
+      child.once("error", reject)
+      child.stdin.end(encode(message))
+    })
+  }
+  const result = await exchange({ action: "targets" })
+  assert.equal(result.ok, true); assert.equal(result.targets.length, 1); assert.equal(result.targets[0].sessionID, "ses_native")
+  assert.equal(result.targets[0].title, "Generated title", "discovery must report the live title, not the one captured at registration")
+  assert.deepEqual([result.targets[0].created, result.targets[0].updated], [1, 2])
+  const paired = await exchange({ action: "info", targetID: receiver.target.id })
+  assert.equal(paired.ok, true); assert.equal(paired.target.sessionID, "ses_native")
   const rejected = spawn(installation.launcher, ["chrome-extension://not-allowed/"], { stdio: ["ignore", "ignore", "pipe"] })
   rejected.stderr.resume()
   assert.notEqual(await new Promise(resolve => rejected.once("exit", resolve)), 0)

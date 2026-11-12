@@ -1,11 +1,13 @@
-import { HOST, PROTOCOL, pageTitle, safeUrl, validateReview } from "./protocol.mjs"
+import { HOST, PROTOCOL, orderedNotes, pageTitle, safeUrl, validateReview } from "./protocol.mjs"
 import { openPanel, reconnectHint, resolveTargetTab, sameExtensionURL, sessionDelivery } from "./env.mjs"
 
 const DELIVERY = sessionDelivery()
 const pageKey = async url => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url)))].map(v => v.toString(16).padStart(2, "0")).join("")
-let writes = Promise.resolve()
+let writes = Promise.resolve(), connectionGeneration = 0
 const serial = fn => { const next = writes.then(fn); writes = next.catch(() => {}); return next }
 const RECONNECT = reconnectHint()
+// Safari's app extension is sandboxed and cannot reach the local bridge, so the only
+// delivery path there is copying the round out.
 const native = message => {
   if (!DELIVERY) throw new Error("Session delivery is off in Safari. Copy the round instead.")
   return chrome.runtime.sendNativeMessage(HOST, message)
@@ -18,6 +20,7 @@ async function activate(tab) {
   await chrome.storage.session.set({ [`tab:${tab.id}`]: { page: { url: safeUrl(tab.url), title: pageTitle(tab.title || "") }, anchor: null } })
 }
 // A reload or navigation removes the page tools; reinject them while activeTab still grants this tab.
+// The receiver-missing wording differs per engine, so detect it by asking the tab instead.
 async function tabMessage(tabId, message) {
   try { return await chrome.tabs.sendMessage(tabId, message) }
   catch (error) {
@@ -28,21 +31,32 @@ async function tabMessage(tabId, message) {
     return chrome.tabs.sendMessage(tabId, message)
   }
 }
+// Chrome reports a missing content script with a fixed string; Safari does not. Probe
+// the tab with a message only the content script answers.
 async function receiverMissing(tabId) {
   try { await chrome.tabs.sendMessage(tabId, { action: "annotate-ping" }); return false }
   catch { return true }
 }
+async function waitLoaded(tabID) {
+  await new Promise((resolve, reject) => {
+    const finish = error => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated); error ? reject(error) : resolve() }
+    const updated = (id, change) => { if (id === tabID && change.status === "complete") finish() }
+    const timer = setTimeout(() => finish(new Error("Page did not finish loading; try again")), 15000)
+    chrome.tabs.onUpdated.addListener(updated)
+    chrome.tabs.get(tabID).then(tab => { if (tab.status === "complete") finish() }, finish)
+  })
+}
 const delivered = note => !note.deleted && note.sentRevision === note.revision
-async function closeRound(hash, annotations, details) {
+async function closeRound(annotations, details) {
   const storage = await chrome.storage.local.get(null), sentAt = new Date().toISOString(), updates = {}
   for (const sent of annotations) {
-    const key = `note:${hash}:${sent.id}`, note = storage[key]
+    const key = `note:${await pageKey(sent.page.url)}:${sent.id}`, note = storage[key]
     if (note && !note.deleted && note.revision === sent.revision) updates[key] = { ...note, sentRevision: sent.revision, sentAt, ...details }
   }
   await chrome.storage.local.set(updates)
   const rounds = new Map()
   for (const [key, note] of Object.entries({ ...storage, ...updates })) {
-    if (!key.startsWith(`note:${hash}:`) || !delivered(note)) continue
+    if (!key.startsWith("note:") || !delivered(note)) continue
     const id = note.sentRound || "legacy"
     if (!rounds.has(id)) rounds.set(id, { at: note.sentAt || "", keys: [] })
     rounds.get(id).keys.push(key)
@@ -71,17 +85,19 @@ async function current(message) {
   if (!state?.page) throw new Error(state?.error || "Click the extension icon on this page to grant access")
   const hash = await pageKey(state.page.url)
   const storage = await chrome.storage.local.get(null)
-  const entries = Object.entries(storage).filter(([key]) => key.startsWith(`note:${hash}:`)).map(([, value]) => value)
+  const entries = Object.entries(storage).filter(([key]) => key.startsWith("note:")).map(([, value]) => value)
   // Delivered notes leave the working list; the latest rounds stay restorable.
-  const notes = entries.filter(note => !note.deleted && !delivered(note)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  const notes = orderedNotes(entries.filter(note => !note.deleted && !delivered(note)))
   const draft = storage[`draft:${hash}`] || { revision: 0, value: null }
-  const outbox = storage[`outbox:${hash}`]
-  let anchorStates = notes.map(() => "unavailable"), draftAnchorState = draft.value ? "unavailable" : undefined, detached = null
+  const outbox = storage.outbox
+  const localNotes = notes.filter(note => note.page.url === state.page.url)
+  let anchorStates = notes.map(note => note.page.url === state.page.url ? "unavailable" : "elsewhere"), draftAnchorState = draft.value ? "unavailable" : undefined, detached = null
   try {
-    const anchors = notes.map(note => note.anchor).concat(draft.value ? [draft.value.anchor] : [])
+    const anchors = localNotes.map(note => note.anchor).concat(draft.value ? [draft.value.anchor] : [])
     const { states } = await tabMessage(tab.id, { action: "locate", anchors })
-    anchorStates = states.slice(0, notes.length)
-    if (draft.value) draftAnchorState = states[notes.length]
+    let index = 0
+    anchorStates = notes.map(note => note.page.url === state.page.url ? states[index++] : "elsewhere")
+    if (draft.value) draftAnchorState = states[localNotes.length]
   } catch (error) { if (error.message === RECONNECT) detached = RECONNECT /* otherwise visibly unavailable while navigating */ }
   return { protocol: PROTOCOL, tabID: tab.id, ...state, notes, anchorStates, hash, draft, draftAnchorState, detached, lastRound: lastRound(entries),
     outbox: outbox ? { targetID: outbox.targetID, count: outbox.review.annotations.length } : null }
@@ -92,9 +108,9 @@ function draftConflict(draft) {
 function validateDraft(page, draft) {
   if (draft === null) return
   if (!draft || typeof draft.comment !== "string" || draft.comment.length > 8000 || !["comment", "ask"].includes(draft.kind)) throw new Error("Invalid draft")
-  validateReview({ version: 1, page, annotations: [{ id: "draft", revision: 1, createdAt: new Date().toISOString(),
+  validateReview({ version: 2, annotations: [{ page, id: "draft", revision: 1, createdAt: new Date().toISOString(),
     kind: draft.kind, comment: draft.comment.trim() || "Draft", anchor: draft.anchor }] })
-  if (draft.editing) validateReview({ version: 1, page, annotations: [draft.editing] })
+  if (draft.editing) validateReview({ version: 2, annotations: [draft.editing] })
   consumedCaptures({}, draft.captures)
 }
 function consumedCaptures(previous, captures) {
@@ -106,6 +122,44 @@ function consumedCaptures(previous, captures) {
     result[tab] = id
   }
   return result
+}
+const sameSession = (a, b) => a?.sessionID && b?.sessionID && a.sessionID === b.sessionID && (a.provider || "opencode") === (b.provider || "opencode")
+// Called within serial(): receiver IDs may change, but retries belong to a session.
+async function rememberTarget(target, storage = undefined) {
+  storage ??= await chrome.storage.local.get(null)
+  const paired = storage.paired, updates = { paired: target, disconnected: false }
+  if (paired?.id !== target.id && sameSession(paired, target)) {
+    updates.retiredTargetIDs = [...new Set([...(storage.retiredTargetIDs || []), paired.id])].slice(-50)
+    for (const [key, batch] of Object.entries(storage)) {
+      if (key === "outbox" && batch.targetID === paired.id) updates[key] = { ...batch, targetID: target.id }
+    }
+  }
+  await chrome.storage.local.set(updates)
+  return target
+}
+async function liveTarget(paired, targets, current) {
+  if (!paired) return targets.length === 1 && targets[0].connected !== false ? targets[0] : null
+  const { retiredTargetIDs = [] } = await chrome.storage.local.get("retiredTargetIDs")
+  const viable = targets.filter(target => target.connected !== false && !retiredTargetIDs.includes(target.id))
+  const exact = viable.find(target => target.id === paired.id)
+  if (exact) {
+    // Backfill the stable identity on older pairings before their receiver restarts.
+    if (!paired.sessionID) await chrome.storage.local.set({ paired: exact })
+    return exact
+  }
+  const candidate = viable.find(target => sameSession(paired, target))
+  if (!candidate || !current()) return null
+  // A discovery response can be stale after a receiver restart; confirm the replacement now.
+  const probe = await native({ action: "info", targetID: candidate.id })
+  if (!probe.ok || !sameSession(paired, probe.target) || !current()) return null
+  const replacement = probe.target
+  return serial(async () => {
+    const storage = await chrome.storage.local.get(null)
+    // Another panel or a newer discovery may have changed the destination in flight.
+    if (!current()) return viable.find(target => target.id === storage.paired?.id) || null
+    if (storage.paired?.id !== paired.id) return viable.find(target => target.id === storage.paired?.id) || null
+    return rememberTarget(replacement, storage)
+  })
 }
 async function handle(message, sender) {
   if (message.action === "capture") {
@@ -136,47 +190,99 @@ async function handle(message, sender) {
   })
   if (message.action === "targets") return native({ action: "targets" })
   if (message.action === "connection") {
-    if (!DELIVERY) return { delivery: false, targets: [], target: null, destination: null, stale: false }
-    const { paired } = await chrome.storage.local.get("paired")
+    const generation = ++connectionGeneration
+    const current = () => generation === connectionGeneration
+    if (!DELIVERY) return { targets: [], workspaces: [], target: null, destination: null, disconnected: false, stale: false, delivery: false }
+    const { paired, disconnected } = await chrome.storage.local.get(["paired", "disconnected"])
     let result
     try {
       result = await native({ action: "targets" })
       if (!result.ok) throw new Error(result.error)
     } catch (error) {
-      return { targets: [], target: null, destination: paired || null, stale: !!paired, error: error.message }
+      return { targets: [], workspaces: [], target: null, destination: paired || null, disconnected: !!disconnected, stale: !!paired, delivery: true, error: error.message }
     }
-    const target = paired ? result.targets.find(target => target.id === paired.id) : result.targets.length === 1 ? result.targets[0] : null
-    return { targets: result.targets, target: target || null, destination: target || paired || null, stale: !!paired && !target }
+    const targets = result.targets.filter(target => target.kind !== "workspace")
+    const workspaces = result.targets.filter(target => target.kind === "workspace" && target.canCreate)
+    const target = disconnected ? null : await liveTarget(paired, targets, current)
+    return { targets, workspaces, target: target || null, destination: target || paired || null, disconnected: !!disconnected, stale: !!paired && !target, delivery: true }
   }
-  if (message.action === "pair") {
-    const result = await native({ action: "info", targetID: message.target.id })
+  if (message.action === "pair") return serial(async () => {
+    connectionGeneration++
+    const result = await native({ action: "connect", targetID: message.target.id })
     if (!result.ok) throw new Error(result.error)
-    await chrome.storage.local.set({ paired: result.target }); return { target: result.target }
-  }
+    return { target: await rememberTarget(result.target) }
+  })
   if (message.action === "pairing") return { target: (await chrome.storage.local.get("paired")).paired || null }
-  if (message.action === "unpair") { await chrome.storage.local.remove("paired"); return {} }
+  if (message.action === "disconnect") return serial(async () => {
+    connectionGeneration++
+    const { paired } = await chrome.storage.local.get("paired")
+    if (paired && paired.id !== message.targetID) throw new Error("The destination changed in another panel; choose it again")
+    const result = await native({ action: "disconnect", targetID: message.targetID })
+    if (!result.ok) throw new Error(result.error)
+    await chrome.storage.local.set({ paired: result.target, disconnected: true })
+    return { target: result.target }
+  })
+  if (message.action === "create-session") return serial(async () => {
+    connectionGeneration++
+    let { pendingCreation } = await chrome.storage.local.get("pendingCreation")
+    if (!pendingCreation || pendingCreation.targetID !== message.targetID) {
+      pendingCreation = { action: "create-session", targetID: message.targetID, requestID: crypto.randomUUID() }
+      await chrome.storage.local.set({ pendingCreation })
+    }
+    const result = await native(pendingCreation)
+    if (!result.ok) throw new Error(result.error)
+    await rememberTarget(result.target)
+    await chrome.storage.local.remove("pendingCreation")
+    return { target: result.target }
+  })
   const state = await current(message)
-  if (message.url && message.url !== state.page.url) throw new Error("The active page changed; retry on the original page")
+  if (["save", "pick"].includes(message.action) && message.url && message.url !== state.page.url) throw new Error("The active page changed; retry on the original page")
   if (message.action === "pick") return tabMessage(state.tabID, { action: "pick" })
   if (message.action === "reveal") {
     const note = state.notes.find(note => note.id === message.noteID)
     if (!note) throw new Error("This note is no longer on the page")
-    const result = await tabMessage(state.tabID, { action: "reveal", anchor: note.anchor })
+    let tabID = state.tabID
+    if (note.page.url !== state.page.url) {
+      const tabs = (await chrome.tabs.query({})).filter(tab => tab.url === note.page.url || tab.pendingUrl === note.page.url)
+      const currentTab = await chrome.tabs.get(state.tabID)
+      const existing = tabs.find(tab => tab.windowId === currentTab.windowId) || tabs[0]
+      if (existing) {
+        tabID = existing.id
+        await chrome.tabs.update(tabID, { active: true })
+        await chrome.windows.update(existing.windowId, { focused: true })
+        await waitLoaded(tabID)
+      } else {
+        await new Promise((resolve, reject) => {
+          const done = (id, change) => { if (id === tabID && change.status === "complete") { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(done); resolve() } }
+          const timer = setTimeout(() => { chrome.tabs.onUpdated.removeListener(done); reject(new Error("Page did not finish loading; try again")) }, 15000)
+          chrome.tabs.onUpdated.addListener(done)
+          chrome.tabs.update(tabID, { url: note.page.url }).catch(error => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(done); reject(error) })
+        })
+      }
+      try { await activate(await chrome.tabs.get(tabID)) }
+      catch { throw new Error(RECONNECT) }
+    }
+    const result = await tabMessage(tabID, { action: "reveal", anchor: note.anchor })
     if (!result.ok) throw new Error(result.error)
     return result
   }
   if (["save", "delete", "restore"].includes(message.action)) return serial(async () => {
-    const key = `note:${state.hash}:${message.note.id}`
+    const page = message.note.page || state.page
+    const key = `note:${await pageKey(page.url)}:${message.note.id}`
     const old = (await chrome.storage.local.get(key))[key]
     if ((old?.revision || 0) !== message.baseRevision) throw Object.assign(new Error("This note changed in another tab. Choose which version to keep."), { code: "note-conflict", note: old || null })
     if (message.action !== "save" && !old) throw new Error("This note no longer exists")
     if (message.action === "restore" && !old.deleted) throw new Error("This note has already been restored")
     if (old && delivered(old)) throw new Error("This note was already delivered; restore its round first")
-    const note = { ...(message.action === "save" ? message.note : old), page: state.page,
+    const note = { ...(message.action === "save" ? message.note : old), page: old?.page || page,
       revision: (old?.revision || 0) + 1, deleted: message.action === "delete" }
     if (message.action === "save") note.sentRevision = old?.sentRevision
-    validateReview({ version: 1, page: state.page, annotations: [note] })
-    if (!old && state.notes.length >= 200) throw new Error("This page has 200 notes; export and remove some first")
+    validateReview({ version: 2, annotations: [note] })
+    const round = (await current(message)).notes.filter(item => item.id !== note.id)
+    if (!note.deleted) {
+      if (round.length >= 200) throw new Error("This round has 200 notes; send or remove some first")
+      validateReview({ version: 2, annotations: [...round, note] })
+    }
     const updates = { [key]: note }
     let draft
     if (message.draftRevision !== undefined) {
@@ -189,31 +295,33 @@ async function handle(message, sender) {
     }
     await chrome.storage.local.set(updates); return { note, draft }
   })
-  if (message.action === "markers") return tabMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.anchor })) })
+  if (message.action === "markers") return tabMessage(state.tabID, { action: "markers", notes: state.notes.map(note => ({ anchor: note.page.url === state.page.url ? note.anchor : null })) })
   if (message.action === "copied") return serial(async () => {
     if (!Array.isArray(message.notes) || !message.notes.length) throw new Error("No copied feedback to record")
-    const count = await closeRound(state.hash, message.notes, { sentRound: crypto.randomUUID(), sentVia: "clipboard", sentTo: null })
+    const count = await closeRound(message.notes, { sentRound: crypto.randomUUID(), sentVia: "clipboard", sentTo: null })
     // Copied feedback supersedes a batch that could not reach its session.
-    await chrome.storage.local.remove(`outbox:${state.hash}`)
+    await chrome.storage.local.remove("outbox")
     return { count }
   })
   if (message.action === "restore-round") return serial(async () => {
     const storage = await chrome.storage.local.get(null), updates = {}
+    const latest = await current(message)
     for (const [key, note] of Object.entries(storage)) {
-      if (!key.startsWith(`note:${state.hash}:`) || !delivered(note) || note.sentRound !== message.roundID) continue
+      if (!key.startsWith("note:") || !delivered(note) || note.sentRound !== message.roundID) continue
       const { sentRevision, sentRound, sentAt, sentVia, sentTo, ...rest } = note
       updates[key] = { ...rest, revision: note.revision + 1 }
     }
     if (!Object.keys(updates).length) throw new Error("This round is no longer available")
-    if (state.notes.length + Object.keys(updates).length > 200) throw new Error("This page would exceed 200 notes; send or remove some first")
+    if (latest.notes.length + Object.keys(updates).length > 200) throw new Error("This round would exceed 200 notes; send or remove some first")
+    validateReview({ version: 2, annotations: [...latest.notes, ...Object.values(updates)] })
     await chrome.storage.local.set(updates)
     return { count: Object.keys(updates).length }
   })
   if (message.action === "send") return serial(async () => {
     const latest = await current(message)
-    if (latest.page.url !== state.page.url) throw new Error("The active page changed; return to the original page to send")
     if (typeof message.targetID !== "string" || !message.targetID) throw new Error("Choose a destination session before sending")
-    let { paired } = await chrome.storage.local.get("paired")
+    let { paired, disconnected } = await chrome.storage.local.get(["paired", "disconnected"])
+    if (disconnected) throw new Error("Session disconnected; select it in Annotate to reconnect")
     if (paired && paired.id !== message.targetID) throw new Error("The destination changed in another panel; choose it again")
     if (!paired) {
       // A sole target is only preselected. The user's Send click authorizes this binding.
@@ -222,19 +330,19 @@ async function handle(message, sender) {
       paired = result.target
       await chrome.storage.local.set({ paired })
     }
-    const outboxKey = `outbox:${state.hash}`
+    const outboxKey = "outbox"
     let batch = (await chrome.storage.local.get(outboxKey))[outboxKey]
     if (batch && batch.targetID !== paired.id) throw new Error("An unsent batch belongs to the previous pairing; restore that pairing or export your notes")
     if (!batch) {
       const pending = latest.notes.filter(note => note.sentRevision !== note.revision)
       if (!pending.length) throw new Error("No new feedback to send")
-      const review = validateReview({ version: 1, page: state.page, annotations: pending })
+      const review = validateReview({ version: 2, annotations: pending })
       batch = { action: "send", batchID: crypto.randomUUID(), targetID: paired.id, review }
       await chrome.storage.local.set({ [outboxKey]: batch })
     }
     const response = await native(batch)
     if (!response.ok) throw new Error(response.error)
-    const count = await closeRound(state.hash, batch.review.annotations, { sentRound: batch.batchID, sentVia: "session", sentTo: paired.title })
+    const count = await closeRound(batch.review.annotations, { sentRound: batch.batchID, sentVia: "session", sentTo: paired.title })
     await chrome.storage.local.remove(outboxKey)
     return { ...response, count }
   })

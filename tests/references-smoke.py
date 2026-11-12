@@ -15,6 +15,8 @@ TMP = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "opencode"
 TMP.mkdir(exist_ok=True)
 root = Path(tempfile.mkdtemp(prefix="annotate-ref-smoke-", dir=TMP)).resolve()
 foreign_root = Path(tempfile.mkdtemp(prefix="annotate-ref-foreign-", dir=TMP)).resolve()
+# Unix socket paths require a short fixture home on macOS.
+fixture_home = Path(tempfile.mkdtemp(prefix="oa-", dir="/tmp"))
 socket = f"annotate-ref-smoke-{os.getpid()}"
 sessions = []
 passed = False
@@ -127,6 +129,9 @@ export default {{ ...plugin, id: "test.annotate-ref", async setup(ctx) {{
 import {{ createReferenceCommand }} from {json.dumps((PLUGIN / "reference-command.mjs").as_uri())}
 import {{ promptReferenceComment }} from {json.dumps((PLUGIN / "reference-comment.tsx").as_uri())}
 import {{ writeFileSync }} from "node:fs"
+import os from "node:os"
+// Isolate automatic native-host setup and receiver registration from the user's home.
+os.homedir = () => {json.dumps(str(fixture_home))}
 export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
   const client = {{ ...ctx.client, session: {{ ...ctx.client.session, prompt(input, options) {{
     writeFileSync({json.dumps(str(submission_path))}, JSON.stringify(input))
@@ -289,6 +294,7 @@ export default {{ ...plugin, id: "test.annotate-ref", setup(ctx) {{
     print("Passed: real server tools, pre-compaction history, >256 KiB response, pagination, message continuation, TUI /ref comment growth/shrink, multiline CJK paste, bounded scrolling, narrow/short resize, cancellation, selection and attachment, steer/resume intent, project/all scope toggle, /ref from home, repeated references before the first message, no model turn.")
 finally:
     tmux("kill-server", check=False)
+    shutil.rmtree(fixture_home)
     for session_id in reversed(sessions):
         try:
             api("delete", f"/api/session/{session_id}")

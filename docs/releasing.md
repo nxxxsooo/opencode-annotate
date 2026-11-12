@@ -1,6 +1,6 @@
 # Releasing
 
-## 0.16.1 candidate — picking inside frames — 2026-11-12
+## 0.16.1 — picking inside frames — 2026-11-12
 
 Prepared from `fix/frame-pick` (`2b649b7`, `6be27ad`) on current public
 `origin/main` in the isolated `release/0.16.1` worktree. Acceptance basis:
@@ -14,12 +14,12 @@ Reload the Chrome extension and restart OpenCode after updating for protocol 7.
 
 | Surface | Verified state |
 |---|---|
-| Source | Local `release/0.16.1` candidate only; push, tag and publication are reserved for the maintainer. |
+| Source | [PR #8](https://github.com/nxxxsooo/opencode-annotate/pull/8), source `44a6a8b`, merged/tagged commit `d2dd5a0cb4c22db1ac276fe80fc88ccf428e369d` (`v0.16.1`). |
 | Local checks | `npm ci`, Cargo lock refresh, local 0.16.1 `build:tui`, formatting/Clippy and 403 Rust tests, `npm run check` (96 Node tests and a 64-entry host-only pack dry-run), all 23 isolated OpenCode smoke scenarios and all 50 isolated Chromium scenarios pass (Chromium on rerun). |
-| CI | Pending; cross-platform native and Safari build gates have not run for this candidate. |
-| Publish / GitHub Release | Pending; no tag, push or publication performed. |
-| Registry | Pending; no 0.16.1 archive verified. |
-| Maintainer install | Live `feat/hc-annotate` checkout left unchanged; installation verification remains pending. |
+| CI | PR run `43234241986` succeeded. Main run `43235446276` passed after rerunning its Safari job, which GitHub cancelled after 15 minutes without starting any step (runner never assigned; same tree had passed on the PR). Publish run `43238573226` succeeded on all five native targets, Safari and package checks. |
+| Publish / GitHub Release | npm `@nxxxsooo/opencode-annotate@0.16.1` is `latest` through trusted publishing; [GitHub Release v0.16.1](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.16.1) is public. |
+| Registry | Downloaded 0.16.1 archive has 68 entries, `gitHead` `d2dd5a0`, package and extension version 0.16.1, protocol 7, all-frame injection and all five native executables. |
+| Maintainer install | `opencode plugin list` still resolves the development checkout on `feat/hc-annotate`, which contains this fix plus unreleased hc work and the one-click Clear (protocol 8). |
 
 Isolated checks do not establish live-model continuation, native side-panel
 behavior or fresh Safari UI acceptance. Only the locally built native target

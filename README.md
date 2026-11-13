@@ -180,6 +180,8 @@ Choose **Pick element** or select text, then write a comment or question. The co
 
 The queue groups notes by page, with contiguous numbers matching page markers and delivered Markdown. Click a note's quoted target to show it on its page without activating the element; off-page notes can open their page. **Edit** changes the feedback, and **Undo** restores a deleted note. The delivery bar shows the whole round's count and destination; drafts remain page-local.
 
+**Clear** in the notes header removes every unsent note in the round; each page group has its own **Clear**. One **Undo** restores the whole removed batch. Drafts, delivered history and **Restore last round** stay intact. Clearing the round drops a pending retry batch only after inline confirmation.
+
 Each send closes the global review round: delivered notes leave the list and the panel is ready for the next round. **Restore last round** returns the most recent round's notes across pages; the last ten rounds are kept globally.
 
 **Send** and **Copy instead** remain separate actions. Send requires a live destination; Copy instead copies the grouped round as Markdown for any agent and closes it the same way. If a session drops during Send, notes remain available for retry or copying. **More review options** contains a non-closing Markdown copy, JSON export, and a preview of the current round.
@@ -195,7 +197,7 @@ Plain `/annotate`, `/annotate-pick` and `/annotate-selection` use the TUI; Markd
 Picking and text selection work inside same-origin iframes, legacy framesets and
 nested frames. Reveal and page markers can find those notes after reload; delivered
 Markdown includes a `Frame:` line for frame context. Cross-origin frames cannot be
-picked and show a clear message. After updating to 0.16.1 (browser protocol 7), reload
+picked and show a clear message. After updating to 0.17.0 (browser protocol 8), reload
 the Chrome extension and restart OpenCode.
 
 Written drafts autosave locally and restore after panel reload or a return to the same URL, including SPA routes. Selecting another target with unfinished feedback offers **Add/Save & switch**, **Keep editing**, or **Discard & switch**. Storage failures keep the input and offer a retry; competing panels require an explicit choice of draft. Saved-note revision checks likewise prevent stale tabs overwriting newer feedback. Full JSON/Markdown exports include redacted URLs, exact selected text/context, verified selector hints, styles and accessibility. Missing/changed/ambiguous targets are labeled in the sidebar instead of silently rebound. Comments and drafts live in extension-owned UI/storage; the page receives only selection metadata and numbered markers, not your written feedback.

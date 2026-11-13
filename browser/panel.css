@@ -138,3 +138,6 @@ pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: a
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 .page-group { list-style: none; display: grid; gap: 2px; padding: 12px 0 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .page-group strong { color: var(--text); font-size: 13px; font-weight: 650; }
+.page-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.page-group-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.page-group-heading button { flex-shrink: 0; }

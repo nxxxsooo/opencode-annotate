@@ -12,7 +12,7 @@ let state, model, destination, available, targets = [], workspaces = [], disconn
 // Safari has no reachable bridge, so the panel offers copy instead of session delivery.
 let deliverySupported = true
 let refreshID = 0, connectionRevision = 0, connectionRefresh, connectionRefreshRevision, connectionTimer, scheduledRefresh
-let pendingAction, pendingFocus, undoRecord, selectedNoteID, noteRenderKey, notice, outdated = false
+let pendingAction, pendingFocus, undoRecord, clearBatchID, selectedNoteID, noteRenderKey, notice, outdated = false
 let sessionSort = localStorage.getItem("sessionSort") || "updated", showAllSessions = false
 
 function icon(name) {
@@ -59,7 +59,7 @@ async function run(id, fn) {
       model.conflict = error; model.error = error
       renderComposer()
     }
-    status(error.message, "error", ["send", "copy-round", "restore-round", "undo", "delete"].includes(id) ? null : page)
+    status(error.message, "error", ["send", "copy-round", "restore-round", "undo", "delete", "clear"].includes(id) ? null : page)
   } finally {
     busy.delete(id); if ($(id)) $(id).disabled = false; controls()
     if (!flushFocus() && !pendingFocus && document.activeElement === document.body && page === state?.page.url &&
@@ -79,7 +79,7 @@ function pendingCount() {
   const pending = state?.notes.filter(note => note.sentRevision !== note.revision) || []
   return pending.length + (validDraft() && !pending.some(note => note.id === model.value.editing?.id) ? 1 : 0)
 }
-function locked() { return ["save", "send", "copy-round", "restore-round", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft", "targets", "new-session", "disconnect", "change-target"].some(id => busy.has(id)) }
+function locked() { return ["clear", "save", "send", "copy-round", "restore-round", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft", "targets", "new-session", "disconnect", "change-target"].some(id => busy.has(id)) }
 function controls() {
   const lock = locked() || outdated
   $("comment").disabled = lock
@@ -100,6 +100,7 @@ function controls() {
   $("disconnect").disabled = lock || !available
   $("copy").disabled = $("export").disabled = !state?.notes.length
   for (const button of $("notes").querySelectorAll("button")) button.disabled = lock
+  for (const id of ["clear", "confirm-clear", "cancel-clear"]) $(id).disabled = lock || !state?.notes.length
   for (const id of busy) if ($(id)) $(id).disabled = true
   if (outdated) for (const button of document.querySelectorAll("button:not(#reload-extension)")) button.disabled = true
   renderDelivery()
@@ -206,7 +207,18 @@ async function deleteNote(id) {
   const result = await call({ action: "delete", url: state.page.url, note, baseRevision: note.revision,
     ...(clearDraft ? { draftRevision: m.record.revision, captures: m.value.captures } : {}) })
   if (clearDraft) { m.record = result.draft; m.value = null; m.touched = false }
-  undoRecord = { note: result.note }
+  undoRecord = { notes: [result.note] }
+  await refresh(); focusWhenReady("#undo")
+}
+
+async function clearNotes(url, dropBatchID) {
+  if (!url && state.outbox && dropBatchID !== state.outbox.batchID) {
+    clearBatchID = state.outbox.batchID; $("clear-warning").hidden = false
+    focusWhenReady("#confirm-clear"); return
+  }
+  const notes = state.notes.filter(note => !url || note.page.url === url)
+  const result = await call({ action: "clear", notes: notes.map(note => ({ url: note.page.url, id: note.id, revision: note.revision })), wholeRound: !url, dropBatchID })
+  undoRecord = { notes: result.notes }; clearBatchID = null; $("clear-warning").hidden = true
   await refresh(); focusWhenReady("#undo")
 }
 
@@ -261,7 +273,12 @@ function renderNotes() {
       pageURL = note.page.url
       const page = note.page, url = new URL(page.url), header = make("li"), title = make("strong", page.title)
       header.className = "page-group"; header.title = page.url
-      header.append(title, make("span", `${url.host}${url.pathname}${page.url === state.page.url ? " · This page" : ""}`))
+      const heading = make("div"), clear = make("button", "Clear")
+      heading.className = "page-group-heading"; clear.className = "text-button"
+      clear.setAttribute("aria-label", `Clear notes from ${page.title}`)
+      clear.onclick = () => run("clear", () => clearNotes(page.url))
+      heading.append(title, clear)
+      header.append(heading, make("span", `${url.host}${url.pathname}${page.url === state.page.url ? " · This page" : ""}`))
       $("notes").append(header)
     }
     const item = make("li"), number = make("span", index + 1), content = make("div"), target = make("button"), bottom = make("div"), meta = make("span")
@@ -340,6 +357,7 @@ function renderDelivery() {
 function render() {
   renderComposer(); renderNotes()
   $("undo-notice").hidden = !undoRecord
+  $("undo-text").textContent = undoRecord ? `${plural(undoRecord.notes.length)} removed.` : ""
   controls()
 }
 function scheduleRefresh() { clearTimeout(scheduledRefresh); scheduledRefresh = setTimeout(() => refresh(), 30) }
@@ -520,10 +538,13 @@ task("copy-draft", async () => {
   catch { $("comment").focus(); $("comment").select(); status("Automatic copy was blocked. Press Cmd/Ctrl+C to copy your draft.", "error") }
 })
 task("undo", async () => {
-   const { note } = undoRecord
-   await call({ action: "restore", note, baseRevision: note.revision }); undoRecord = null
-  await refresh(); status("Note restored"); focusWhenReady(`[data-note-id="${CSS.escape(note.id)}"] .note-target`)
+  const { notes } = undoRecord
+  await call({ action: "restore-notes", notes: notes.map(note => ({ url: note.page.url, id: note.id, revision: note.revision })) }); undoRecord = null
+  await refresh(); status(`${plural(notes.length)} restored`); focusWhenReady(`[data-note-id="${CSS.escape(notes[0].id)}"] .note-target`)
 })
+task("clear", () => clearNotes())
+$("confirm-clear").addEventListener("click", () => run("clear", () => clearNotes(undefined, clearBatchID)))
+task("cancel-clear", () => { clearBatchID = null; $("clear-warning").hidden = true; focusWhenReady("#clear") })
 task("more", () => { const show = $("utilities").hidden; $("utilities").hidden = !show; $("more").setAttribute("aria-expanded", String(show)); if (show) $("panel-body").scrollTop = 0 })
 task("change-target", async () => { showSessionOptions($("session-options").hidden); if (!$("session-options").hidden) await refreshConnection() })
 $("session-sort").value = sessionSort

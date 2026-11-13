@@ -91,7 +91,7 @@ test("Safari signing, identity and inert native handler", async () => {
   assert.match(swift, /SFExtensionMessageKey/)
   assert.match(swift, /completeRequest\(returningItems:/)
   assert.doesNotMatch(swift, /Process\(|homeDirectoryForCurrentUser|\.local\/share/)
-  assert.equal(PROTOCOL, 7)
+  assert.equal(PROTOCOL, 8)
 })
 test("npm allowlist includes Safari sources and imported runtime browser opener", async () => {
   const pkg = JSON.parse(await text("package.json"))

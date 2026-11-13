@@ -797,6 +797,83 @@ try {
   assert.deepEqual([...interleavedMarkdown.matchAll(/^### Annotation (\d+)/gm)].map(match => Number(match[1])), [1, 2, 3])
   assert.ok(interleavedMarkdown.indexOf("Page A later feedback") < interleavedMarkdown.indexOf("Page B edited from page A"))
   passed.push("Interleaved A→B→A notes use contiguous page-group numbering in worker state, panel and Markdown")
+  await worker.evaluate(async tabId => {
+    await chrome.scripting.executeScript({ target: { tabId }, func: () => {
+      globalThis.__opencodeAnnotate?.dispose()
+      const attach = Element.prototype.attachShadow
+      Element.prototype.attachShadow = function(options) {
+        const root = attach.call(this, options)
+        if (this.hasAttribute("data-opencode-annotate")) globalThis.__clearTestRoot = root
+        return root
+      }
+    } })
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["capture.js"] })
+  }, interleaved.tabID)
+  const clearPins = () => worker.evaluate(async tabId => {
+    const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: () => [...(globalThis.__clearTestRoot?.querySelectorAll(".pin") || [])].map(node => node.textContent) })
+    return result.result
+  }, interleaved.tabID)
+  await panel.evaluate(() => chrome.runtime.sendMessage({ action: "markers" }))
+  assert.deepEqual(await clearPins(), ["1", "2"])
+  if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-clear.png") })
+  await panel.locator(".page-group").first().getByRole("button", { name: /^Clear notes from/ }).click()
+  await panel.locator("#count").filter({ hasText: "1 note in this round" }).waitFor()
+  assert.deepEqual(await clearPins(), [])
+  assert.deepEqual((await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))).notes.map(note => note.page.url), [`${url}/second`])
+  await panel.locator("#undo").click()
+  await panel.locator("#count").filter({ hasText: "3 notes in this round" }).waitFor()
+  assert.deepEqual(await panel.locator(".note-number").allTextContents(), ["1", "2", "3"])
+  assert.deepEqual(await clearPins(), ["1", "2"])
+  // A stale batch fails atomically, including when an earlier reference is valid.
+  const conflict = await panel.evaluate(async () => {
+    const { notes } = await chrome.runtime.sendMessage({ action: "current" })
+    return chrome.runtime.sendMessage({ action: "clear", notes: notes.map((note, i) => ({ url: note.page.url, id: note.id, revision: note.revision - (i === 1 ? 1 : 0) })) })
+  })
+  assert.equal(conflict.code, "note-conflict")
+  assert.equal((await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))).notes.length, 3)
+  await panel.locator("#clear").click()
+  await panel.locator("#empty-state").waitFor()
+  assert.equal(await panel.locator("#notes .note").count(), 0)
+  assert.deepEqual(await clearPins(), [])
+  await panel.locator("#undo").click()
+  await panel.locator("#count").filter({ hasText: "3 notes in this round" }).waitFor()
+  assert.deepEqual(await panel.locator(".note-number").allTextContents(), ["1", "2", "3"])
+  const restoredClear = await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))
+  assert.deepEqual(restoredClear.notes.map(note => note.id), interleaved.notes.map(note => note.id))
+  // A retry snapshot is discarded only after inline confirmation; drafts survive.
+  await worker.evaluate(async notes => chrome.storage.local.set({ outbox: { batchID: "clear-retry", targetID: "isolated", review: { version: 2, annotations: notes } } }), restoredClear.notes)
+  await panel.locator("#send-label").filter({ hasText: "Retry 3 notes" }).waitFor()
+  await panel.locator("#clear").click()
+  await panel.locator("#clear-warning").waitFor()
+  assert.equal((await worker.evaluate(() => chrome.storage.local.get("outbox"))).outbox.batchID, "clear-retry")
+  await panel.locator("#confirm-clear").click()
+  await panel.locator("#empty-state").waitFor()
+  assert.equal((await worker.evaluate(() => chrome.storage.local.get("outbox"))).outbox, null)
+  await panel.locator("#undo").click()
+  await panel.locator("#count").filter({ hasText: "3 notes in this round" }).waitFor()
+  passed.push("Page and whole-round Clear are atomic, undo restores every note with numbering intact, and retry discard requires inline confirmation")
+  await pick("#public")
+  await panel.getByLabel("Your feedback").fill("Keep this current-page draft during Clear")
+  await panel.locator("#draft-state").filter({ hasText: "Draft saved locally" }).waitFor()
+  await panel.locator("#clear").click()
+  await panel.waitForFunction(() => document.querySelectorAll("#notes .note").length === 0)
+  assert.equal(await panel.getByLabel("Your feedback").inputValue(), "Keep this current-page draft during Clear")
+  await panel.locator("#undo").click()
+  await panel.locator("#count").filter({ hasText: "3 notes in this round" }).waitFor()
+  await panel.getByRole("button", { name: "Discard draft", exact: true }).click()
+  // Delivered history must remain recoverable after clearing the next working round.
+  await panel.evaluate(async () => {
+    const { notes } = await chrome.runtime.sendMessage({ action: "current" })
+    await chrome.runtime.sendMessage({ action: "copied", notes })
+  })
+  await panel.locator("#restore-round").waitFor()
+  await pick("#public")
+  await panel.getByLabel("Your feedback").fill("Temporary next-round note")
+  await panel.getByRole("button", { name: "Add note", exact: true }).click()
+  await panel.locator("#clear").click()
+  await panel.locator("#restore-round").click()
+  await panel.locator("#count").filter({ hasText: "3 notes in this round" }).waitFor()
+  passed.push("Clear preserves current-page drafts and delivered rounds remain restorable")
   // Frame regression suite uses only this isolated profile. Capture closed shadow
   // roots in the extension's isolated world to assert the actual highlight/pins.
   const rpc = message => panel.evaluate(message => chrome.runtime.sendMessage(message), message)

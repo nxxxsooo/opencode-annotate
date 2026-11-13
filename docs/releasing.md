@@ -1,5 +1,40 @@
 # Releasing
 
+## 0.17.0 candidate — clear the round — 2026-11-13
+
+Prepared from public `origin/main` (`889837b`) in the isolated `release/0.17.0`
+worktree, cherry-picking Clear commit `feb4d57`. Acceptance basis: Mingjian
+dev-tested the feature, 2026-11-13, and confirmed “发吧”. The live development
+checkout and its unreleased hc work are untouched; no hc changes are included.
+
+The notes-header **Clear** removes every unsent note across the round, and each
+page group has its own **Clear**. One **Undo** restores the whole removed batch.
+Drafts, delivered history and **Restore last round** remain intact. Dropping a
+pending retry batch requires inline confirmation. Reload the Chrome extension
+and restart OpenCode after updating for browser protocol 8.
+
+| Surface | Verified state |
+|---|---|
+| Source | Local `release/0.17.0` candidate only; push, tag and publication are reserved for the maintainer. |
+| Local checks | `npm ci`, Cargo lock refresh, local 0.17.0 `build:tui`, formatting/Clippy and all 403 Rust tests, `npm run check` (96 Node tests and a 64-entry host-only pack dry-run), all 23 isolated OpenCode smoke scenarios and all 52 isolated Chromium scenarios pass (Chromium on unchanged rerun). |
+| CI | Pending, including all five native targets and Safari build gates. |
+| Publish / GitHub Release | Pending; no tag or publication created during preparation. |
+| Registry | Pending archive/version/protocol and all-five-executable verification. |
+| Maintainer install | Unchanged: development checkout on `feat/hc-annotate`, including unreleased hc work. |
+
+Isolated checks do not establish live-model continuation, native side-panel
+behavior or fresh Safari UI acceptance. Only the locally built native target
+is verified before CI. Smoke fixtures force `resume: false` at the API boundary;
+no real session or model turn is driven.
+
+The first Chromium run stopped at the existing off-page Edit scenario before the
+new Clear checks (`#composer-title` never reached “Edit note”; the panel reported
+`Cannot read properties of null (reading 'notes')`). An unchanged rerun passed
+the complete suite, including Clear, batch Undo, retry confirmation, draft/history
+preservation and frame regressions. No runtime or test code was changed during
+release preparation. The cherry-picked feature patch matches `feb4d57` exactly;
+no hunks were dropped and no unreleased hc dependencies were needed.
+
 ## 0.16.1 — picking inside frames — 2026-11-12
 
 Prepared from `fix/frame-pick` (`2b649b7`, `6be27ad`) on current public

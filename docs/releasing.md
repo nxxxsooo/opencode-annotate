@@ -1,6 +1,6 @@
 # Releasing
 
-## 0.17.0 candidate — clear the round — 2026-11-13
+## 0.17.0 — clear the round — 2026-11-13
 
 Prepared from public `origin/main` (`889837b`) in the isolated `release/0.17.0`
 worktree, cherry-picking Clear commit `feb4d57`. Acceptance basis: Mingjian
@@ -15,12 +15,12 @@ and restart OpenCode after updating for browser protocol 8.
 
 | Surface | Verified state |
 |---|---|
-| Source | Local `release/0.17.0` candidate only; push, tag and publication are reserved for the maintainer. |
+| Source | [PR #9](https://github.com/nxxxsooo/opencode-annotate/pull/9), source `28b2760` (feature `1c447dc`, cherry-picked from `feb4d57`), merged/tagged commit `012effc305e6d773b54882a27ac912832df44e58` (`v0.17.0`). |
 | Local checks | `npm ci`, Cargo lock refresh, local 0.17.0 `build:tui`, formatting/Clippy and all 403 Rust tests, `npm run check` (96 Node tests and a 64-entry host-only pack dry-run), all 23 isolated OpenCode smoke scenarios and all 52 isolated Chromium scenarios pass (Chromium on unchanged rerun). |
-| CI | Pending, including all five native targets and Safari build gates. |
-| Publish / GitHub Release | Pending; no tag or publication created during preparation. |
-| Registry | Pending archive/version/protocol and all-five-executable verification. |
-| Maintainer install | Unchanged: development checkout on `feat/hc-annotate`, including unreleased hc work. |
+| CI | PR run `43350335049`, main run `43351642168` and publish run `43352650089` succeeded, including all five native targets, Safari's converter/Xcode gate and package checks. |
+| Publish / GitHub Release | npm `@nxxxsooo/opencode-annotate@0.17.0` is `latest` through trusted publishing; [GitHub Release v0.17.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.17.0) is public. |
+| Registry | Downloaded 0.17.0 archive has 68 entries, `gitHead` `012effc`, package and extension version 0.17.0, protocol 8, the `clear` worker action, no hc files and all five native executables. |
+| Maintainer install | `opencode plugin list` still resolves the development checkout on `feat/hc-annotate`, which already contains this feature plus unreleased hc work. |
 
 Isolated checks do not establish live-model continuation, native side-panel
 behavior or fresh Safari UI acceptance. Only the locally built native target

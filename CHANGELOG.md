@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.0 — clear the round
+
+- **Clear** in the notes header removes every unsent note in the round; each page
+  group also has its own **Clear**. One **Undo** restores the whole removed batch.
+- Keep delivered history, **Restore last round** and page-local drafts. A pending
+  retry batch is dropped only after inline confirmation when clearing the round.
+- Browser protocol 8 requires matching companion files: reload the Chrome extension
+  and restart OpenCode after updating.
+
 ## 0.16.1 — picking inside frames
 
 - Fix picking and text selection inside same-origin iframes, legacy framesets and
